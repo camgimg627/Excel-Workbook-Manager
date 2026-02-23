@@ -22,6 +22,7 @@ import {
   addShapeOnActiveCell,
   addRectangleShape,
   applyAccentFill,
+  alignShapeToSelection,
   applyCellStylePreset,
   applyFormulaToShapeAnchorCell,
   applyTableStyle,
@@ -29,16 +30,22 @@ import {
   getCurrentSelectionAddress,
   getNamedRangeValueText,
   getNamedRanges,
+  getShapeEditorRecord,
   getTables,
   insertText,
   moveNamedRange,
   moveShapeToSelection,
+  nudgeShape,
   renameShape,
   refreshPivotTables,
   evaluateFormula,
+  setShapeGeometricType,
+  setShapeZOrder,
   selectNamedRangeAddress,
   toggleGridlines,
   ShapeFormatOptions,
+  ShapeEditorRecord,
+  updateShapePosition,
   updateShapeFormatting,
   updateTableName,
   updateNamedRange,
@@ -165,6 +172,10 @@ interface CustomFormulaScheme {
 interface ShapeEditorState {
   shapeName: string;
   shapeType: InsertableShapeType;
+  geometricShapeType: string;
+  left: number;
+  top: number;
+  zOrderPosition: number;
   fillColor: string;
   outlineColor: string;
   fontColor: string;
@@ -182,6 +193,14 @@ interface ShapeEditorState {
   bold: boolean;
   italic: boolean;
   lockAspectRatio: boolean;
+  selectedThemeId: string;
+}
+
+interface ShapeTheme {
+  id: string;
+  label: string;
+  themeColors: string[];
+  standardColors: string[];
 }
 
 const DEFAULT_TABLE_STYLE = "TableStyleMedium2";
@@ -251,6 +270,62 @@ const WORKBOOK_THEME_SWATCHES = [
   "#997300",
 ];
 const NO_FILL_COLOR_TOKEN = "__NO_FILL__";
+
+const SHAPE_THEMES: ShapeTheme[] = [
+  {
+    id: "theme1",
+    label: "Theme1",
+    themeColors: ["#000000", "#FFFFFF", "#1F4E79", "#4F81BD", "#9BBB59", "#8064A2", "#4BACC6", "#F79646", "#C0504D", "#7F7F7F"],
+    standardColors: ["#C00000", "#FF0000", "#FFC000", "#FFFF00", "#92D050", "#00B050", "#00B0F0", "#0070C0", "#002060", "#7030A0"],
+  },
+  {
+    id: "office",
+    label: "Office",
+    themeColors: ["#000000", "#FFFFFF", "#1F497D", "#4F81BD", "#C0504D", "#9BBB59", "#8064A2", "#4BACC6", "#F79646", "#7F7F7F"],
+    standardColors: ["#C00000", "#FF0000", "#FFC000", "#FFFF00", "#92D050", "#00B050", "#00B0F0", "#0070C0", "#002060", "#7030A0"],
+  },
+  {
+    id: "gallery",
+    label: "Gallery",
+    themeColors: ["#2F2F2F", "#FFFFFF", "#6D4A2C", "#A37446", "#9C7A47", "#7D8D4E", "#5E8D93", "#6B6B8A", "#C0672D", "#8E8E8E"],
+    standardColors: ["#9E480E", "#C55A11", "#F4B183", "#FFD966", "#A9D18E", "#70AD47", "#5B9BD5", "#2E75B6", "#1F3864", "#5F497A"],
+  },
+];
+
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+
+const mixColor = (hex: string, target: string, factor: number) => {
+  const clean = hex.replace("#", "");
+  const tgt = target.replace("#", "");
+  const r1 = parseInt(clean.slice(0, 2), 16);
+  const g1 = parseInt(clean.slice(2, 4), 16);
+  const b1 = parseInt(clean.slice(4, 6), 16);
+  const r2 = parseInt(tgt.slice(0, 2), 16);
+  const g2 = parseInt(tgt.slice(2, 4), 16);
+  const b2 = parseInt(tgt.slice(4, 6), 16);
+  const r = Math.round(r1 + (r2 - r1) * factor);
+  const g = Math.round(g1 + (g2 - g1) * factor);
+  const b = Math.round(b1 + (b2 - b1) * factor);
+  return `#${[r, g, b]
+    .map((v) => clamp(v, 0, 255).toString(16).padStart(2, "0"))
+    .join("")
+    .toUpperCase()}`;
+};
+
+const buildThemeToneGrid = (baseColors: string[]) => {
+  const tintTargets = ["#FFFFFF", "#FFFFFF", "#FFFFFF", "#000000", "#000000"];
+  const tintFactors = [0.82, 0.58, 0.32, 0.22, 0.42];
+  return tintTargets.map((target, idx) =>
+    baseColors.map((color) => mixColor(color, target, tintFactors[idx]))
+  );
+};
+
+const parseThemeColorList = (value: string): string[] =>
+  value
+    .split(",")
+    .map((item) => item.trim().toUpperCase())
+    .filter((item) => /^#[0-9A-F]{6}$/.test(item))
+    .slice(0, 10);
 
 const NAMES_TABS: SecondaryTab[] = [
   { id: "ranges", label: "Ranges" },
@@ -736,6 +811,44 @@ const useStyles = makeStyles({
     display: "grid",
     gap: "8px",
   },
+  nestedSection: {
+    border: "1px solid #e2e2e2",
+    borderRadius: "5px",
+    backgroundColor: "#ffffff",
+    overflow: "hidden",
+  },
+  nestedSummary: {
+    cursor: "pointer",
+    listStyle: "none",
+    padding: "6px 8px",
+    fontSize: "10px",
+    fontWeight: 600,
+    backgroundColor: "#f7f7f7",
+    borderBottom: "1px solid #ececec",
+  },
+  nestedBody: {
+    padding: "8px",
+    display: "grid",
+    gap: "8px",
+  },
+  themePaletteHeader: {
+    display: "grid",
+    gridTemplateColumns: "repeat(10, minmax(0, 1fr))",
+    gap: "4px",
+  },
+  themePaletteRow: {
+    display: "grid",
+    gridTemplateColumns: "repeat(10, minmax(0, 1fr))",
+    gap: "4px",
+  },
+  paletteSwatch: {
+    width: "100%",
+    minWidth: "16px",
+    height: "16px",
+    border: "1px solid #cfcfcf",
+    borderRadius: "2px",
+    padding: 0,
+  },
   formulaMenuBar: {
     display: "flex",
     alignItems: "center",
@@ -1061,6 +1174,10 @@ const App: React.FC = () => {
   const [shapeState, setShapeState] = useState<ShapeEditorState>({
     shapeName: "",
     shapeType: "Rectangle",
+    geometricShapeType: "Rectangle",
+    left: 0,
+    top: 0,
+    zOrderPosition: 0,
     fillColor: "#E3F2FD",
     outlineColor: "#1F4E78",
     fontColor: "#1F1F1F",
@@ -1078,11 +1195,21 @@ const App: React.FC = () => {
     bold: false,
     italic: false,
     lockAspectRatio: false,
+    selectedThemeId: "theme1",
   });
   const [shapeSuggestionIndex, setShapeSuggestionIndex] = useState<number>(0);
+  const [shapeThemes, setShapeThemes] = useState<ShapeTheme[]>(SHAPE_THEMES);
+  const [newShapeThemeName, setNewShapeThemeName] = useState<string>("MyTheme");
+  const [customThemeColorsText, setCustomThemeColorsText] = useState<string>(
+    SHAPE_THEMES[0].themeColors.join(",")
+  );
+  const [customStandardColorsText, setCustomStandardColorsText] = useState<string>(
+    SHAPE_THEMES[0].standardColors.join(",")
+  );
   const formulaEditorRef = useRef<HTMLTextAreaElement | null>(null);
   const formulaHighlightRef = useRef<HTMLPreElement | null>(null);
   const formulaLineNumbersRef = useRef<HTMLDivElement | null>(null);
+  const shapeActivationHandlersRef = useRef<Array<{ remove: () => Promise<void> | void }>>([]);
 
   const primaryTabs: PrimaryTab[] = useMemo(() => ["Names", "Format", "Sandbox"], []);
 
@@ -1132,7 +1259,7 @@ const App: React.FC = () => {
         });
       }
       setStatusType("success");
-      setStatus(`Loaded ${ranges.length} named range(s).`);
+      setStatus(`Loaded ${ranges.length} name/shape record(s).`);
     } catch (error) {
       setStatusType("error");
       const message = error instanceof Error ? error.message : String(error);
@@ -2653,6 +2780,10 @@ const App: React.FC = () => {
   };
 
   const openEdit = (record: NamedRangeRecord) => {
+    if (record.kind === "Shape") {
+      void openShapeEditorFromNames(record);
+      return;
+    }
     setEditState({
       open: true,
       record,
@@ -2685,10 +2816,113 @@ const App: React.FC = () => {
   };
 
   const goToRange = async (record: NamedRangeRecord) => {
+    if (record.kind === "Shape") {
+      await runAction("Open shape editor", async () => {
+        await openShapeEditorFromNames(record);
+      });
+      return;
+    }
     await runAction("Navigate to range", async () => {
       await selectNamedRangeAddress(record.address, record.sheet);
     });
   };
+
+  const hydrateShapeEditor = (details: ShapeEditorRecord) => {
+    const effectiveAnchor = details.anchorAddress || "A1";
+    setPrimaryTab("Format");
+    setSecondaryTabId("shapes");
+    setActiveShape({
+      name: details.name,
+      shapeType: details.shapeType,
+      sheet: details.sheet,
+      anchorAddress: effectiveAnchor,
+      width: details.width,
+      height: details.height,
+    });
+    setShapeState((prev) => ({
+      ...prev,
+      shapeName: details.name,
+      shapeType: details.shapeType,
+      geometricShapeType: details.geometricShapeType,
+      left: details.left,
+      top: details.top,
+      zOrderPosition: details.zOrderPosition,
+      fillColor: details.fillColor,
+      outlineColor: details.outlineColor,
+      fontColor: details.fontColor,
+      text: details.text,
+      lineWeight: details.lineWeight,
+      fillTransparency: details.fillTransparency,
+      width: details.width,
+      height: details.height,
+      rotation: details.rotation,
+      textHorizontalAlignment: details.textHorizontalAlignment,
+      textVerticalAlignment: details.textVerticalAlignment,
+      fontSize: details.fontSize,
+      bold: details.bold,
+      italic: details.italic,
+      lockAspectRatio: details.lockAspectRatio,
+    }));
+  };
+
+  const openShapeEditorFromNames = async (record: NamedRangeRecord) => {
+    const details: ShapeEditorRecord = await getShapeEditorRecord(record.sheet, record.name);
+    hydrateShapeEditor(details);
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    const register = async () => {
+      try {
+        await Excel.run(async (context) => {
+          const worksheets = context.workbook.worksheets;
+          worksheets.load("items/name");
+          await context.sync();
+
+          for (const sheet of worksheets.items) {
+            const shapes = sheet.shapes;
+            shapes.load("items/name");
+            await context.sync();
+            for (const shape of shapes.items) {
+              const sheetName = sheet.name;
+              const shapeName = shape.name;
+              const handler = await shape.onActivated.add(async () => {
+                if (cancelled) {
+                  return;
+                }
+                try {
+                  const details = await getShapeEditorRecord(sheetName, shapeName);
+                  hydrateShapeEditor(details);
+                } catch {
+                  // ignore host or shape-state sync failures
+                }
+              });
+              shapeActivationHandlersRef.current.push(handler as { remove: () => Promise<void> | void });
+            }
+          }
+        });
+      } catch {
+        // host may not support shape activation events
+      }
+    };
+
+    void register();
+    return () => {
+      cancelled = true;
+      const handlers = [...shapeActivationHandlersRef.current];
+      shapeActivationHandlersRef.current = [];
+      handlers.forEach((handler) => {
+        try {
+          const removed = handler.remove();
+          if (removed instanceof Promise) {
+            void removed;
+          }
+        } catch {
+          // ignore cleanup errors
+        }
+      });
+    };
+  }, [namedRanges.length]);
 
   const submitMove = async () => {
     if (!moveState.record) {
@@ -3078,7 +3312,7 @@ const App: React.FC = () => {
                     <Button
                       className={styles.rowActionTextBtn}
                       title="Edit name and address"
-                      disabled={!item.isRange}
+                      disabled={item.kind === "NamedRange" && !item.isRange}
                       onClick={() => openEdit(item)}
                     >
                       Edit
@@ -3102,7 +3336,7 @@ const App: React.FC = () => {
                   </div>
                 </td>
                 <td className={styles.td}>
-                  {item.isRange ? (
+                  {item.isRange || item.kind === "Shape" ? (
                     <button
                       type="button"
                       className={styles.nameLink}
@@ -3281,29 +3515,22 @@ const App: React.FC = () => {
     </div>
   );
 
-  const themeColorSwatches = useMemo(() => {
-    const officeTheme = (globalThis as unknown as { Office?: { context?: { officeTheme?: any } } })
-      .Office?.context?.officeTheme;
-    const potential = [
-      officeTheme?.["bodyBackgroundColor"],
-      officeTheme?.["bodyForegroundColor"],
-      officeTheme?.["controlBackgroundColor"],
-      officeTheme?.["controlForegroundColor"],
-      officeTheme?.["accentColor"],
-      ...WORKBOOK_THEME_SWATCHES,
-    ];
-    const normalized = potential
-      .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
-      .map((value) => {
-        const compact = value.trim();
-        if (/^#[0-9a-f]{6}$/i.test(compact)) {
-          return compact.toUpperCase();
-        }
-        return "";
-      })
-      .filter((value) => value.length > 0);
-    return Array.from(new Set(normalized));
-  }, []);
+  const selectedShapeTheme = useMemo(() => {
+    return (
+      shapeThemes.find((theme) => theme.id === shapeState.selectedThemeId) ??
+      shapeThemes[0] ??
+      SHAPE_THEMES[0]
+    );
+  }, [shapeState.selectedThemeId, shapeThemes]);
+  const themeColorSwatches = selectedShapeTheme.themeColors;
+  const themeColorRows = useMemo(
+    () => buildThemeToneGrid(selectedShapeTheme.themeColors),
+    [selectedShapeTheme]
+  );
+  useEffect(() => {
+    setCustomThemeColorsText(selectedShapeTheme.themeColors.join(","));
+    setCustomStandardColorsText(selectedShapeTheme.standardColors.join(","));
+  }, [selectedShapeTheme.id]);
 
   const shapeValueSuggestions = useMemo(() => {
     const token = shapeState.valueBinding.trim().toLowerCase();
@@ -3337,6 +3564,12 @@ const App: React.FC = () => {
         width: inserted.width,
         height: inserted.height,
       }));
+      try {
+        const details = await getShapeEditorRecord(inserted.sheet, inserted.name);
+        hydrateShapeEditor(details);
+      } catch {
+        // shape details enrichment is optional
+      }
       setShapeAddOpen(false);
       setStatusType("success");
       setStatus(`Inserted ${inserted.shapeType} on ${inserted.anchorAddress}.`);
@@ -3440,6 +3673,27 @@ const App: React.FC = () => {
     setShapeState((prev) => ({ ...prev, [field]: color }));
   };
 
+  const createCustomShapeTheme = () => {
+    const name = newShapeThemeName.trim();
+    if (!name) {
+      return;
+    }
+    const parsedThemeColors = parseThemeColorList(customThemeColorsText);
+    const parsedStandardColors = parseThemeColorList(customStandardColorsText);
+    const base = selectedShapeTheme;
+    const nextId = `custom-${Date.now().toString()}`;
+    const nextTheme: ShapeTheme = {
+      id: nextId,
+      label: name,
+      themeColors:
+        parsedThemeColors.length > 0 ? parsedThemeColors : [...base.themeColors],
+      standardColors:
+        parsedStandardColors.length > 0 ? parsedStandardColors : [...base.standardColors],
+    };
+    setShapeThemes((prev) => [...prev, nextTheme]);
+    setShapeState((prev) => ({ ...prev, selectedThemeId: nextId }));
+  };
+
   const applyShapeNoFill = () => {
     setShapeState((prev) => ({ ...prev, fillColor: NO_FILL_COLOR_TOKEN }));
   };
@@ -3469,6 +3723,70 @@ const App: React.FC = () => {
         activeShape.anchorAddress
       );
       setActiveShape((prev) => (prev ? { ...prev, anchorAddress: moved.anchorAddress } : prev));
+      const refreshed = await getShapeEditorRecord(activeShape.sheet, activeShape.name);
+      hydrateShapeEditor(refreshed);
+    });
+  };
+
+  const applyShapePosition = async () => {
+    if (!activeShape) {
+      return;
+    }
+    await runAction("Update shape position", async () => {
+      await updateShapePosition(activeShape.sheet, activeShape.name, {
+        left: shapeState.left,
+        top: shapeState.top,
+      });
+    });
+  };
+
+  const nudgeActiveShape = async (dx: number, dy: number) => {
+    if (!activeShape) {
+      return;
+    }
+    await runAction("Nudge shape", async () => {
+      await nudgeShape(activeShape.sheet, activeShape.name, dx, dy);
+      const refreshed = await getShapeEditorRecord(activeShape.sheet, activeShape.name);
+      hydrateShapeEditor(refreshed);
+    });
+  };
+
+  const applyShapeZOrder = async (
+    order: "BringToFront" | "BringForward" | "SendToBack" | "SendBackward"
+  ) => {
+    if (!activeShape) {
+      return;
+    }
+    await runAction("Update shape arrange order", async () => {
+      await setShapeZOrder(activeShape.sheet, activeShape.name, order);
+      const refreshed = await getShapeEditorRecord(activeShape.sheet, activeShape.name);
+      hydrateShapeEditor(refreshed);
+    });
+  };
+
+  const applyGeometricShapeType = async (
+    shapeType: Exclude<InsertableShapeType, "TextBox">
+  ) => {
+    if (!activeShape) {
+      return;
+    }
+    await runAction("Edit shape type", async () => {
+      await setShapeGeometricType(activeShape.sheet, activeShape.name, shapeType);
+      const refreshed = await getShapeEditorRecord(activeShape.sheet, activeShape.name);
+      hydrateShapeEditor(refreshed);
+    });
+  };
+
+  const alignActiveShape = async (
+    alignment: "Left" | "Center" | "Right" | "Top" | "Middle" | "Bottom"
+  ) => {
+    if (!activeShape) {
+      return;
+    }
+    await runAction("Align shape", async () => {
+      await alignShapeToSelection(activeShape.sheet, activeShape.name, alignment);
+      const refreshed = await getShapeEditorRecord(activeShape.sheet, activeShape.name);
+      hydrateShapeEditor(refreshed);
     });
   };
 
@@ -3522,6 +3840,93 @@ const App: React.FC = () => {
             <details className={styles.collapsibleSection} open>
               <summary className={styles.collapsibleSummary}>Appearance</summary>
               <div className={styles.collapsibleBody}>
+            <details className={styles.nestedSection} open>
+              <summary className={styles.nestedSummary}>Shape Styles</summary>
+              <div className={styles.nestedBody}>
+                <div className={styles.modalRow}>
+                  <Text className={styles.modalLabel}>Themes</Text>
+                  <Select
+                    className={styles.smallSelect}
+                    value={shapeState.selectedThemeId}
+                    onChange={(_, data) =>
+                      setShapeState((prev) => ({ ...prev, selectedThemeId: data.value }))
+                    }
+                  >
+                    {shapeThemes.map((theme) => (
+                      <option key={theme.id} value={theme.id}>
+                        {theme.label}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+                <Text className={styles.modalLabel}>Theme Colors</Text>
+                <div className={styles.themePaletteHeader}>
+                  {selectedShapeTheme.themeColors.map((color) => (
+                    <button
+                      key={`theme-header-${color}`}
+                      type="button"
+                      className={styles.paletteSwatch}
+                      style={{ backgroundColor: color }}
+                      onClick={() => applyThemeColorToShapeField("fillColor", color)}
+                    />
+                  ))}
+                </div>
+                {themeColorRows.map((row, rowIndex) => (
+                  <div key={`row-${rowIndex.toString()}`} className={styles.themePaletteRow}>
+                    {row.map((color) => (
+                      <button
+                        key={`tone-${rowIndex.toString()}-${color}`}
+                        type="button"
+                        className={styles.paletteSwatch}
+                        style={{ backgroundColor: color }}
+                        onClick={() => applyThemeColorToShapeField("fillColor", color)}
+                      />
+                    ))}
+                  </div>
+                ))}
+                <Text className={styles.modalLabel}>Standard Colors</Text>
+                <div className={styles.themePaletteRow}>
+                  {selectedShapeTheme.standardColors.map((color) => (
+                    <button
+                      key={`standard-${color}`}
+                      type="button"
+                      className={styles.paletteSwatch}
+                      style={{ backgroundColor: color }}
+                      onClick={() => applyThemeColorToShapeField("fillColor", color)}
+                    />
+                  ))}
+                </div>
+                <div className={styles.modalInlineRow}>
+                  <div className={styles.modalRow}>
+                    <Text className={styles.modalLabel}>Create Custom Theme</Text>
+                    <Input
+                      value={newShapeThemeName}
+                      onChange={(_, data) => setNewShapeThemeName(data.value)}
+                    />
+                  </div>
+                  <div className={styles.modalRow}>
+                    <Text className={styles.modalLabel}>Actions</Text>
+                    <Button className={styles.miniBtn} onClick={createCustomShapeTheme}>
+                      Save Current as Theme
+                    </Button>
+                  </div>
+                </div>
+                <div className={styles.modalRow}>
+                  <Text className={styles.modalLabel}>Theme Colors (10 hex, comma-separated)</Text>
+                  <Input
+                    value={customThemeColorsText}
+                    onChange={(_, data) => setCustomThemeColorsText(data.value)}
+                  />
+                </div>
+                <div className={styles.modalRow}>
+                  <Text className={styles.modalLabel}>Standard Colors (10 hex, comma-separated)</Text>
+                  <Input
+                    value={customStandardColorsText}
+                    onChange={(_, data) => setCustomStandardColorsText(data.value)}
+                  />
+                </div>
+              </div>
+            </details>
             <div className={styles.modalInlineRow}>
               <div className={styles.modalRow}>
                 <Text className={styles.modalLabel}>Fill</Text>
@@ -3613,6 +4018,9 @@ const App: React.FC = () => {
                 />
               </div>
             </div>
+            <details className={styles.nestedSection} open>
+              <summary className={styles.nestedSummary}>Size & Shape Effects</summary>
+              <div className={styles.nestedBody}>
             <div className={styles.modalInlineRow}>
               <div className={styles.modalRow}>
                 <Text className={styles.modalLabel}>Width</Text>
@@ -3713,6 +4121,133 @@ const App: React.FC = () => {
                 />
               </div>
             </div>
+              </div>
+            </details>
+            <details className={styles.nestedSection} open>
+              <summary className={styles.nestedSummary}>Arrange & Alignment</summary>
+              <div className={styles.nestedBody}>
+            <div className={styles.modalInlineRow}>
+              <div className={styles.modalRow}>
+                <Text className={styles.modalLabel}>Position Left</Text>
+                <input
+                  className={styles.numberInput}
+                  type="number"
+                  min={0}
+                  value={shapeState.left}
+                  onChange={(event) =>
+                    setShapeState((prev) => ({
+                      ...prev,
+                      left: Number(event.target.value) || 0,
+                    }))
+                  }
+                />
+              </div>
+              <div className={styles.modalRow}>
+                <Text className={styles.modalLabel}>Position Top</Text>
+                <input
+                  className={styles.numberInput}
+                  type="number"
+                  min={0}
+                  value={shapeState.top}
+                  onChange={(event) =>
+                    setShapeState((prev) => ({
+                      ...prev,
+                      top: Number(event.target.value) || 0,
+                    }))
+                  }
+                />
+              </div>
+            </div>
+            <div className={styles.topActions}>
+              <Button className={styles.miniBtn} onClick={() => void applyShapePosition()}>
+                Apply Position
+              </Button>
+              <Button className={styles.miniBtn} onClick={() => void nudgeActiveShape(-4, 0)}>
+                Nudge Left
+              </Button>
+              <Button className={styles.miniBtn} onClick={() => void nudgeActiveShape(4, 0)}>
+                Nudge Right
+              </Button>
+              <Button className={styles.miniBtn} onClick={() => void nudgeActiveShape(0, -4)}>
+                Nudge Up
+              </Button>
+              <Button className={styles.miniBtn} onClick={() => void nudgeActiveShape(0, 4)}>
+                Nudge Down
+              </Button>
+            </div>
+            <div className={styles.topActions}>
+              <Button className={styles.miniBtn} onClick={() => void alignActiveShape("Left")}>
+                Align Left
+              </Button>
+              <Button className={styles.miniBtn} onClick={() => void alignActiveShape("Center")}>
+                Align Center
+              </Button>
+              <Button className={styles.miniBtn} onClick={() => void alignActiveShape("Right")}>
+                Align Right
+              </Button>
+              <Button className={styles.miniBtn} onClick={() => void alignActiveShape("Top")}>
+                Align Top
+              </Button>
+              <Button className={styles.miniBtn} onClick={() => void alignActiveShape("Middle")}>
+                Align Middle
+              </Button>
+              <Button className={styles.miniBtn} onClick={() => void alignActiveShape("Bottom")}>
+                Align Bottom
+              </Button>
+            </div>
+            <div className={styles.topActions}>
+              <Button className={styles.miniBtn} onClick={() => void applyShapeZOrder("BringToFront")}>
+                Bring To Front
+              </Button>
+              <Button className={styles.miniBtn} onClick={() => void applyShapeZOrder("BringForward")}>
+                Bring Forward
+              </Button>
+              <Button className={styles.miniBtn} onClick={() => void applyShapeZOrder("SendBackward")}>
+                Send Backward
+              </Button>
+              <Button className={styles.miniBtn} onClick={() => void applyShapeZOrder("SendToBack")}>
+                Send To Back
+              </Button>
+            </div>
+            <div className={styles.modalInlineRow}>
+              <div className={styles.modalRow}>
+                <Text className={styles.modalLabel}>Edit Shape</Text>
+                <Select
+                  className={styles.smallSelect}
+                  value={shapeState.shapeType}
+                  onChange={(_, data) =>
+                    setShapeState((prev) => ({
+                      ...prev,
+                      shapeType: data.value as InsertableShapeType,
+                    }))
+                  }
+                >
+                  <option value="Rectangle">Rectangle</option>
+                  <option value="RoundedRectangle">Rounded Rectangle</option>
+                  <option value="Chevron">Chevron</option>
+                  <option value="Hexagon">Hexagon</option>
+                  <option value="Diamond">Diamond</option>
+                  <option value="Oval">Oval</option>
+                </Select>
+              </div>
+              <div className={styles.modalRow}>
+                <Text className={styles.modalLabel}>Current Z-Order Position</Text>
+                <Input value={shapeState.zOrderPosition.toString()} readOnly />
+                <Text className={styles.modalLabel}>Current Shape Type</Text>
+                <Input value={shapeState.geometricShapeType || shapeState.shapeType} readOnly />
+              </div>
+            </div>
+            <div className={styles.topActions}>
+              <Button
+                className={styles.miniBtn}
+                onClick={() =>
+                  void applyGeometricShapeType(shapeState.shapeType as Exclude<InsertableShapeType, "TextBox">)
+                }
+                disabled={shapeState.shapeType === "TextBox"}
+              >
+                Apply Edit Shape
+              </Button>
+            </div>
             <div className={styles.modalInlineRow}>
               <div className={styles.modalRow}>
                 <Text className={styles.modalLabel}>Text Horizontal Alignment</Text>
@@ -3781,6 +4316,8 @@ const App: React.FC = () => {
                 Lock Aspect Ratio
               </label>
             </div>
+              </div>
+            </details>
               </div>
             </details>
             <details className={styles.collapsibleSection}>
@@ -3865,6 +4402,34 @@ const App: React.FC = () => {
                 <option value="Oval">Oval</option>
                 <option value="TextBox">Text Box</option>
               </Select>
+            </div>
+            <div className={styles.modalRow}>
+              <Text className={styles.modalLabel}>Theme</Text>
+              <Select
+                className={styles.smallSelect}
+                value={shapeState.selectedThemeId}
+                onChange={(_, data) =>
+                  setShapeState((prev) => ({ ...prev, selectedThemeId: data.value }))
+                }
+              >
+                {shapeThemes.map((theme) => (
+                  <option key={`insert-theme-${theme.id}`} value={theme.id}>
+                    {theme.label}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <Text className={styles.modalLabel}>Theme Colors</Text>
+            <div className={styles.themePaletteHeader}>
+              {selectedShapeTheme.themeColors.map((color) => (
+                <button
+                  key={`insert-theme-color-${color}`}
+                  type="button"
+                  className={styles.paletteSwatch}
+                  style={{ backgroundColor: color }}
+                  onClick={() => applyThemeColorToShapeField("fillColor", color)}
+                />
+              ))}
             </div>
             <div className={styles.modalInlineRow}>
               <div className={styles.modalRow}>

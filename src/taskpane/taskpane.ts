@@ -76,7 +76,39 @@ export interface ShapeFormatOptions {
   lockAspectRatio: boolean;
 }
 
+export interface ShapeEditorRecord {
+  name: string;
+  sheet: string;
+  shapeType: InsertableShapeType;
+  geometricShapeType: string;
+  anchorAddress: string;
+  left: number;
+  top: number;
+  zOrderPosition: number;
+  fillColor: string;
+  outlineColor: string;
+  fontColor: string;
+  text: string;
+  lineWeight: number;
+  fillTransparency: number;
+  width: number;
+  height: number;
+  rotation: number;
+  textHorizontalAlignment: "Left" | "Center" | "Right";
+  textVerticalAlignment: "Top" | "Middle" | "Bottom";
+  fontSize: number;
+  bold: boolean;
+  italic: boolean;
+  lockAspectRatio: boolean;
+}
+
+export interface ShapePositionOptions {
+  left: number;
+  top: number;
+}
+
 const NO_FILL_COLOR_TOKEN = "__NO_FILL__";
+const SHAPE_ANCHOR_PREFIX = "WBM_ANCHOR=";
 
 async function runFormattingCommand(command: (context: Excel.RequestContext) => Promise<void>) {
   await Excel.run(async (context) => {
@@ -186,6 +218,40 @@ function parseAddressLikeText(
   } catch {
     return null;
   }
+}
+
+function extractShapeAnchorAddress(altTextDescription: string | null | undefined): string {
+  const text = (altTextDescription ?? "").trim();
+  if (!text.startsWith(SHAPE_ANCHOR_PREFIX)) {
+    return "";
+  }
+  return text.slice(SHAPE_ANCHOR_PREFIX.length).trim();
+}
+
+function inferInsertableShapeType(
+  geometricType?: string | null,
+  textAsGeometry?: string | null
+): InsertableShapeType {
+  const normalized = (geometricType ?? textAsGeometry ?? "").toLowerCase();
+  if (normalized.includes("round")) {
+    return "RoundedRectangle";
+  }
+  if (normalized.includes("chevron")) {
+    return "Chevron";
+  }
+  if (normalized.includes("hexagon")) {
+    return "Hexagon";
+  }
+  if (normalized.includes("diamond")) {
+    return "Diamond";
+  }
+  if (normalized.includes("oval") || normalized.includes("ellipse")) {
+    return "Oval";
+  }
+  if (normalized.length === 0) {
+    return "TextBox";
+  }
+  return "Rectangle";
 }
 
 export async function insertText(text: string) {
@@ -713,6 +779,7 @@ export async function addShapeOnActiveCell(
     shape.lineFormat.weight = 1;
     shape.textFrame.textRange.font.color = options.fontColor;
     shape.placement = Excel.Placement.oneCell;
+    shape.altTextDescription = `${SHAPE_ANCHOR_PREFIX}${anchorAddress}`;
 
     await context.sync();
 
@@ -767,6 +834,142 @@ export async function renameShape(sheetName: string, oldName: string, newName: s
   });
 }
 
+export async function getShapeEditorRecord(
+  sheetName: string,
+  shapeName: string
+): Promise<ShapeEditorRecord> {
+  return Excel.run(async (context) => {
+    const sheet = context.workbook.worksheets.getItem(sheetName);
+    const shape = sheet.shapes.getItem(shapeName);
+    shape.load(
+      "name,left,top,zOrderPosition,width,height,rotation,lockAspectRatio,geometricShapeType,altTextDescription,fill/foregroundColor,fill/transparency,lineFormat/color,lineFormat/weight,textFrame/horizontalAlignment,textFrame/verticalAlignment,textFrame/textRange/text,textFrame/textRange/font/color,textFrame/textRange/font/size,textFrame/textRange/font/bold,textFrame/textRange/font/italic"
+    );
+    await context.sync();
+
+    const fillColor = shape.fill.foregroundColor ? shape.fill.foregroundColor : NO_FILL_COLOR_TOKEN;
+    const anchorAddress = extractShapeAnchorAddress(shape.altTextDescription);
+
+    return {
+      name: shape.name,
+      sheet: sheetName,
+      shapeType: inferInsertableShapeType(shape.geometricShapeType),
+      geometricShapeType: String(shape.geometricShapeType || ""),
+      anchorAddress,
+      left: shape.left || 0,
+      top: shape.top || 0,
+      zOrderPosition: shape.zOrderPosition || 0,
+      fillColor,
+      outlineColor: shape.lineFormat.color || "#000000",
+      fontColor: shape.textFrame.textRange.font.color || "#1f1f1f",
+      text: shape.textFrame.textRange.text || "",
+      lineWeight: shape.lineFormat.weight || 1,
+      fillTransparency: shape.fill.transparency || 0,
+      width: shape.width || 110,
+      height: shape.height || 34,
+      rotation: shape.rotation || 0,
+      textHorizontalAlignment:
+        (shape.textFrame.horizontalAlignment as ShapeEditorRecord["textHorizontalAlignment"]) ||
+        "Center",
+      textVerticalAlignment:
+        (shape.textFrame.verticalAlignment as ShapeEditorRecord["textVerticalAlignment"]) ||
+        "Middle",
+      fontSize: shape.textFrame.textRange.font.size || 11,
+      bold: Boolean(shape.textFrame.textRange.font.bold),
+      italic: Boolean(shape.textFrame.textRange.font.italic),
+      lockAspectRatio: Boolean(shape.lockAspectRatio),
+    };
+  });
+}
+
+export async function updateShapePosition(
+  sheetName: string,
+  shapeName: string,
+  options: ShapePositionOptions
+) {
+  await Excel.run(async (context) => {
+    const shape = context.workbook.worksheets.getItem(sheetName).shapes.getItem(shapeName);
+    shape.left = Math.max(0, options.left);
+    shape.top = Math.max(0, options.top);
+    await context.sync();
+  });
+}
+
+export async function nudgeShape(sheetName: string, shapeName: string, dx: number, dy: number) {
+  await Excel.run(async (context) => {
+    const shape = context.workbook.worksheets.getItem(sheetName).shapes.getItem(shapeName);
+    if (dx !== 0) {
+      shape.incrementLeft(dx);
+    }
+    if (dy !== 0) {
+      shape.incrementTop(dy);
+    }
+    await context.sync();
+  });
+}
+
+export async function setShapeZOrder(
+  sheetName: string,
+  shapeName: string,
+  position: "BringToFront" | "BringForward" | "SendToBack" | "SendBackward"
+) {
+  await Excel.run(async (context) => {
+    const shape = context.workbook.worksheets.getItem(sheetName).shapes.getItem(shapeName);
+    shape.setZOrder(position);
+    await context.sync();
+  });
+}
+
+export async function setShapeGeometricType(
+  sheetName: string,
+  shapeName: string,
+  shapeType: Exclude<InsertableShapeType, "TextBox">
+) {
+  await Excel.run(async (context) => {
+    const shape = context.workbook.worksheets.getItem(sheetName).shapes.getItem(shapeName);
+    const geometricMap: Record<Exclude<InsertableShapeType, "TextBox">, string> = {
+      Rectangle: "Rectangle",
+      RoundedRectangle: "Round2SameRectangle",
+      Chevron: "Chevron",
+      Hexagon: "Hexagon",
+      Diamond: "Diamond",
+      Oval: "Ellipse",
+    };
+    shape.geometricShapeType = geometricMap[shapeType] as unknown as Excel.GeometricShapeType;
+    await context.sync();
+  });
+}
+
+export async function alignShapeToSelection(
+  sheetName: string,
+  shapeName: string,
+  alignment: "Left" | "Center" | "Right" | "Top" | "Middle" | "Bottom"
+) {
+  await Excel.run(async (context) => {
+    const sheet = context.workbook.worksheets.getItem(sheetName);
+    const shape = sheet.shapes.getItem(shapeName);
+    const selected = context.workbook.getSelectedRange();
+    shape.load("left,top,width,height");
+    selected.load("left,top,width,height");
+    await context.sync();
+
+    if (alignment === "Left") {
+      shape.left = selected.left;
+    } else if (alignment === "Center") {
+      shape.left = selected.left + (selected.width - shape.width) / 2;
+    } else if (alignment === "Right") {
+      shape.left = selected.left + selected.width - shape.width;
+    } else if (alignment === "Top") {
+      shape.top = selected.top;
+    } else if (alignment === "Middle") {
+      shape.top = selected.top + (selected.height - shape.height) / 2;
+    } else if (alignment === "Bottom") {
+      shape.top = selected.top + selected.height - shape.height;
+    }
+
+    await context.sync();
+  });
+}
+
 export async function moveShapeToSelection(
   sheetName: string,
   shapeName: string,
@@ -794,6 +997,7 @@ export async function moveShapeToSelection(
       selectedCell.copyFrom(oldAnchor, Excel.RangeCopyType.all);
       oldAnchor.clear(Excel.ClearApplyTo.contents);
     }
+    shape.altTextDescription = `${SHAPE_ANCHOR_PREFIX}${targetAddress}`;
 
     await context.sync();
     return { anchorAddress: targetAddress };
