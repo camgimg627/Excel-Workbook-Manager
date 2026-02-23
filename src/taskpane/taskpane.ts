@@ -31,6 +31,13 @@ export interface FormulaEvaluationResult {
   values: (string | number | boolean | null)[][];
 }
 
+export interface ActiveCellFormulaState {
+  sheet: string;
+  address: string;
+  formula: string;
+  hasFormula: boolean;
+}
+
 export type CellStylePreset = "Input Cell" | "Parameter Cell" | "Header" | "Subheader";
 export type InsertableShapeType =
   | "Rectangle"
@@ -662,6 +669,34 @@ export async function evaluateFormula(formulaText: string): Promise<FormulaEvalu
     output.clear(Excel.ClearApplyTo.contents);
     await context.sync();
     return result;
+  });
+}
+
+export async function getActiveCellFormulaState(): Promise<ActiveCellFormulaState> {
+  return Excel.run(async (context) => {
+    const selection = context.workbook.getSelectedRange().getCell(0, 0);
+    const worksheet = context.workbook.worksheets.getActiveWorksheet();
+    selection.load("address,formulas");
+    worksheet.load("name");
+    await context.sync();
+
+    const formulaValue = String(selection.formulas?.[0]?.[0] ?? "");
+    const parsed = splitQualifiedAddress(selection.address);
+    return {
+      sheet: worksheet.name,
+      address: parsed.address || selection.address,
+      formula: formulaValue,
+      hasFormula: formulaValue.startsWith("="),
+    };
+  });
+}
+
+export async function applyFormulaToActiveCell(formulaText: string): Promise<void> {
+  await Excel.run(async (context) => {
+    const selection = context.workbook.getSelectedRange().getCell(0, 0);
+    const normalized = formulaText.trim();
+    selection.formulas = [[normalized.startsWith("=") ? normalized : `=${normalized}`]];
+    await context.sync();
   });
 }
 

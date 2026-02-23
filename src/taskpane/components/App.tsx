@@ -23,9 +23,11 @@ import {
   addRectangleShape,
   applyAccentFill,
   applyCellStylePreset,
+  applyFormulaToActiveCell,
   applyFormulaToShapeAnchorCell,
   applyTableStyle,
   deleteNamedRangeWithOptions,
+  getActiveCellFormulaState,
   getCurrentSelectionAddress,
   getNamedRangeValueText,
   getNamedRanges,
@@ -121,6 +123,13 @@ interface FunctionDefinition {
   name: string;
   description: string;
   params: string[];
+}
+
+interface ActiveFormulaPrompt {
+  sheet: string;
+  address: string;
+  formula: string;
+  hasFormula: boolean;
 }
 
 interface FormulaSuggestion {
@@ -886,6 +895,28 @@ const useStyles = makeStyles({
     fontSize: "10px",
     color: "#2f63b7",
   },
+  formulaPromptCard: {
+    border: "1px solid #bfd2f5",
+    borderRadius: "4px",
+    backgroundColor: "#f2f7ff",
+    padding: "8px",
+    display: "grid",
+    gap: "6px",
+    marginBottom: "8px",
+  },
+  formulaPromptTitle: {
+    fontSize: "11px",
+    fontWeight: 700,
+    color: "#194a96",
+  },
+  formulaPromptText: {
+    fontSize: "10px",
+    color: "#2f3b4a",
+  },
+  formulaPromptMeta: {
+    fontSize: "10px",
+    color: "#4f5d6d",
+  },
   formulaPaletteEditor: {
     display: "grid",
     gap: "6px",
@@ -1053,6 +1084,7 @@ const App: React.FC = () => {
   const [customFunctionParams, setCustomFunctionParams] = useState<string[]>(["param1", "param2"]);
   const [testFormulaCall, setTestFormulaCall] = useState<string>("");
   const [formulaOutput, setFormulaOutput] = useState<FormulaEvaluationResult | null>(null);
+  const [activeFormulaPrompt, setActiveFormulaPrompt] = useState<ActiveFormulaPrompt | null>(null);
   const [formulaCursor, setFormulaCursor] = useState<number>(formulaText.length);
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState<number>(0);
   const [formulaContextMenu, setFormulaContextMenu] = useState<{ x: number; y: number } | null>(null);
@@ -2179,6 +2211,31 @@ const App: React.FC = () => {
       setStatus(`Formula test failed: ${message}`);
       setFormulaOutput(null);
     }
+  };
+
+  const pullActiveCellFormula = async () => {
+    await runAction("Open active cell formula in editor", async () => {
+      const activeCell = await getActiveCellFormulaState();
+      setActiveFormulaPrompt(activeCell);
+      if (!activeCell.hasFormula) {
+        throw new Error(`Cell ${activeCell.sheet}!${activeCell.address} does not contain a formula.`);
+      }
+      setFormulaText(activeCell.formula);
+      setFormulaMode("Formula");
+      setTestFormulaCall(activeCell.formula);
+    });
+  };
+
+  const pushFormulaToActiveCell = async () => {
+    await runAction("Apply editor formula to active cell", async () => {
+      const normalized = formulaText.trim();
+      if (!normalized) {
+        throw new Error("Formula editor is empty.");
+      }
+      await applyFormulaToActiveCell(normalized);
+      const refreshed = await getActiveCellFormulaState();
+      setActiveFormulaPrompt(refreshed);
+    });
   };
 
   useEffect(() => {
@@ -3976,6 +4033,26 @@ const App: React.FC = () => {
     <>
       <div className={styles.sectionCard}>
         <Text className={styles.sectionTitle}>Formula Bar</Text>
+        <div className={styles.formulaPromptCard}>
+          <Text className={styles.formulaPromptTitle}>Use Workbook Manager Formula Editor</Text>
+          <Text className={styles.formulaPromptText}>
+            If you are editing in Excel&apos;s formula bar, pull that formula into this editor for autocomplete,
+            formatting, and testing.
+          </Text>
+          <Text className={styles.formulaPromptMeta}>
+            {activeFormulaPrompt
+              ? `Active cell: ${activeFormulaPrompt.sheet}!${activeFormulaPrompt.address}`
+              : "Active cell: not captured yet"}
+          </Text>
+          <div className={styles.topActions}>
+            <Button className={styles.miniBtn} onClick={() => void pullActiveCellFormula()}>
+              Open Active Cell Formula
+            </Button>
+            <Button className={styles.miniBtn} onClick={() => void pushFormulaToActiveCell()}>
+              Apply Formula Back to Active Cell
+            </Button>
+          </div>
+        </div>
         <div className={styles.formulaMenuBar}>
           <Select
             className={styles.smallSelect}
