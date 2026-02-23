@@ -191,6 +191,10 @@ interface ShapeEditorState {
   bold: boolean;
   italic: boolean;
   lockAspectRatio: boolean;
+  effectShadow: string;
+  effectBevel: string;
+  effectReflection: string;
+  bindingMode: "StaticText" | "NamedRange" | "Formula";
 }
 
 const DEFAULT_TABLE_STYLE = "TableStyleMedium2";
@@ -260,6 +264,25 @@ const WORKBOOK_THEME_SWATCHES = [
   "#997300",
 ];
 const NO_FILL_COLOR_TOKEN = "__NO_FILL__";
+const SHAPE_STYLE_PRESETS = [
+  "Office Style 1",
+  "Office Style 2",
+  "Subtle Effect",
+  "Moderate Effect",
+  "Intense Effect",
+];
+const SHAPE_COLOR_OPTIONS = [
+  { value: NO_FILL_COLOR_TOKEN, label: "No Fill" },
+  { value: "#FFFFFF", label: "White" },
+  { value: "#E3F2FD", label: "Light Blue" },
+  { value: "#D9EAD3", label: "Light Green" },
+  { value: "#FFF2CC", label: "Light Gold" },
+  { value: "#FCE4D6", label: "Light Orange" },
+  { value: "#F4CCCC", label: "Light Red" },
+  { value: "#D9D2E9", label: "Light Purple" },
+  { value: "#1F4E78", label: "Dark Blue" },
+  { value: "#000000", label: "Black" },
+];
 
 const NAMES_TABS: SecondaryTab[] = [
   { id: "ranges", label: "Ranges" },
@@ -1110,8 +1133,13 @@ const App: React.FC = () => {
     bold: false,
     italic: false,
     lockAspectRatio: false,
+    effectShadow: "None",
+    effectBevel: "None",
+    effectReflection: "None",
+    bindingMode: "StaticText",
   });
-  const [shapeSuggestionIndex, setShapeSuggestionIndex] = useState<number>(0);
+  const [shapeStylePreset, setShapeStylePreset] = useState<string>(SHAPE_STYLE_PRESETS[0]);
+  const [shapeThemeName, setShapeThemeName] = useState<string>("Current Workbook Theme");
   const formulaEditorRef = useRef<HTMLTextAreaElement | null>(null);
   const formulaHighlightRef = useRef<HTMLPreElement | null>(null);
   const formulaLineNumbersRef = useRef<HTMLDivElement | null>(null);
@@ -3314,31 +3342,62 @@ const App: React.FC = () => {
   );
 
   const renderFormatStyles = () => (
-    <div className={styles.sectionCard}>
-      <Text className={styles.sectionTitle}>Default Cell Styles</Text>
-      <Text className={styles.modalLabel}>
-        Select a range in Excel, then apply a style preset.
-      </Text>
-      <div className={styles.stylePresetGrid}>
-        {formatStylePresets.map((item) => (
-          <div key={item.preset} className={styles.stylePresetCard}>
-            <Text className={styles.stylePresetTitle}>{item.preset}</Text>
-            <Text className={styles.stylePresetDesc}>{item.description}</Text>
-            <Button
-              className={styles.miniBtn}
-              onClick={() =>
-                runAction(`Apply ${item.preset}`, () => applyCellStylePreset(item.preset))
-              }
-            >
-              Apply Style
-            </Button>
-          </div>
-        ))}
+    <>
+      <div className={styles.sectionCard}>
+        <Text className={styles.sectionTitle}>Default Cell Styles</Text>
+        <Text className={styles.modalLabel}>
+          Select a range in Excel, then apply a style preset.
+        </Text>
+        <div className={styles.stylePresetGrid}>
+          {formatStylePresets.map((item) => (
+            <div key={item.preset} className={styles.stylePresetCard}>
+              <Text className={styles.stylePresetTitle}>{item.preset}</Text>
+              <Text className={styles.stylePresetDesc}>{item.description}</Text>
+              <Button
+                className={styles.miniBtn}
+                onClick={() =>
+                  runAction(`Apply ${item.preset}`, () => applyCellStylePreset(item.preset))
+                }
+              >
+                Apply Style
+              </Button>
+            </div>
+          ))}
+        </div>
       </div>
-    </div>
+      <div className={styles.sectionCard}>
+        <Text className={styles.sectionTitle}>Shape Styles & Themes</Text>
+        <div className={styles.modalInlineRow}>
+          <div className={styles.modalRow}>
+            <Text className={styles.modalLabel}>Preset Style</Text>
+            <Select
+              className={styles.smallSelect}
+              value={shapeStylePreset}
+              onChange={(_, data) => setShapeStylePreset(data.value)}
+            >
+              {SHAPE_STYLE_PRESETS.map((preset) => (
+                <option key={preset} value={preset}>{preset}</option>
+              ))}
+            </Select>
+          </div>
+          <div className={styles.modalRow}>
+            <Text className={styles.modalLabel}>Theme Profile</Text>
+            <Input
+              value={shapeThemeName}
+              onChange={(_, data) => setShapeThemeName(data.value)}
+              placeholder="Create custom theme"
+            />
+            <Text className={styles.modalLabel}>
+              Uses workbook theme colors as the starting palette, then lets you save custom variants.
+            </Text>
+            <Text className={styles.modalLabel}>{workbookThemeColors.join(" • ")}</Text>
+          </div>
+        </div>
+      </div>
+    </>
   );
 
-  const themeColorSwatches = useMemo(() => {
+  const workbookThemeColors = useMemo(() => {
     const officeTheme = (globalThis as unknown as { Office?: { context?: { officeTheme?: any } } })
       .Office?.context?.officeTheme;
     const potential = [
@@ -3351,18 +3410,15 @@ const App: React.FC = () => {
     ];
     const normalized = potential
       .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
-      .map((value) => {
-        const compact = value.trim();
-        if (/^#[0-9a-f]{6}$/i.test(compact)) {
-          return compact.toUpperCase();
-        }
-        return "";
-      })
-      .filter((value) => value.length > 0);
+      .map((value) => value.trim().toUpperCase())
+      .filter((value) => /^#[0-9A-F]{6}$/.test(value));
     return Array.from(new Set(normalized));
   }, []);
 
   const shapeValueSuggestions = useMemo(() => {
+    if (shapeState.bindingMode !== "NamedRange") {
+      return [];
+    }
     const token = shapeState.valueBinding.trim().toLowerCase();
     if (!token) {
       return [];
@@ -3372,45 +3428,10 @@ const App: React.FC = () => {
       .map((item) => item.name)
       .filter((name) => name.toLowerCase().includes(token))
       .slice(0, 25);
-  }, [namedRanges, shapeState.valueBinding]);
+  }, [namedRanges, shapeState.bindingMode, shapeState.valueBinding]);
 
-  const shapeColorInputValue = (value: string, fallback: string) =>
-    value === NO_FILL_COLOR_TOKEN ? fallback : value;
-
-  const insertShapeFromSelection = async () => {
-    setIsSubmitting(true);
-    try {
-      const inserted = await addShapeOnActiveCell({
-        shapeType: shapeState.shapeType,
-        fillColor: shapeState.fillColor,
-        outlineColor: shapeState.outlineColor,
-        fontColor: shapeState.fontColor,
-        text: shapeState.text,
-      });
-      setActiveShape(inserted);
-      setShapeState((prev) => ({
-        ...prev,
-        shapeName: inserted.name,
-        width: inserted.width,
-        height: inserted.height,
-      }));
-      setShapeAddOpen(false);
-      setStatusType("success");
-      setStatus(`Inserted ${inserted.shapeType} on ${inserted.anchorAddress}.`);
-    } catch (error) {
-      setStatusType("error");
-      const message = error instanceof Error ? error.message : String(error);
-      setStatus(`Insert shape failed: ${message}`);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const applyShapeFormatting = async () => {
-    if (!activeShape) {
-      return;
-    }
-    const options: ShapeFormatOptions = {
+  const shapeFormattingOptions = useMemo(
+    () => ({
       fillColor: shapeState.fillColor,
       outlineColor: shapeState.outlineColor,
       fontColor: shapeState.fontColor,
@@ -3426,79 +3447,81 @@ const App: React.FC = () => {
       bold: shapeState.bold,
       italic: shapeState.italic,
       lockAspectRatio: shapeState.lockAspectRatio,
-    };
-    await runAction("Update shape formatting", async () => {
-      await updateShapeFormatting(activeShape.sheet, activeShape.name, options);
-    });
-  };
+    } satisfies ShapeFormatOptions),
+    [shapeState]
+  );
 
-  const applyNamedRangeToShapeText = async (rangeName?: string) => {
+  useEffect(() => {
     if (!activeShape) {
-      return;
+      return undefined;
     }
-    const target = (rangeName ?? shapeState.valueBinding).trim();
-    if (!target) {
-      return;
+    const timer = setTimeout(() => {
+      void updateShapeFormatting(activeShape.sheet, activeShape.name, shapeFormattingOptions).catch(
+        (error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          setStatusType("error");
+          setStatus(`Auto-update shape formatting failed: ${message}`);
+        }
+      );
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [activeShape, shapeFormattingOptions]);
+
+  useEffect(() => {
+    if (!activeShape) {
+      return undefined;
     }
+    const timer = setTimeout(() => {
+      if (shapeState.bindingMode === "NamedRange" && shapeState.valueBinding.trim()) {
+        void getNamedRangeValueText(shapeState.valueBinding.trim())
+          .then((valueText) => {
+            setShapeState((prev) => (prev.text === valueText ? prev : { ...prev, text: valueText }));
+          })
+          .catch((error) => {
+            const message = error instanceof Error ? error.message : String(error);
+            setStatusType("error");
+            setStatus(`Named range binding failed: ${message}`);
+          });
+        return;
+      }
+      if (shapeState.bindingMode === "Formula" && shapeState.formula.trim()) {
+        void applyFormulaToShapeAnchorCell(
+          activeShape.sheet,
+          activeShape.anchorAddress,
+          shapeState.formula,
+          activeShape.name
+        ).catch((error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          setStatusType("error");
+          setStatus(`Formula binding failed: ${message}`);
+        });
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [activeShape, shapeState.bindingMode, shapeState.valueBinding, shapeState.formula]);
+
+  const insertShapeFromSelection = async () => {
     setIsSubmitting(true);
     try {
-      const valueText = await getNamedRangeValueText(target);
-      setShapeState((prev) => ({
-        ...prev,
-        valueBinding: target,
-        text: valueText,
-      }));
-      await updateShapeFormatting(activeShape.sheet, activeShape.name, {
+      const inserted = await addShapeOnActiveCell({
+        shapeType: shapeState.shapeType,
         fillColor: shapeState.fillColor,
         outlineColor: shapeState.outlineColor,
         fontColor: shapeState.fontColor,
-        text: valueText,
-        lineWeight: shapeState.lineWeight,
-        fillTransparency: shapeState.fillTransparency,
-        width: shapeState.width,
-        height: shapeState.height,
-        rotation: shapeState.rotation,
-        textHorizontalAlignment: shapeState.textHorizontalAlignment,
-        textVerticalAlignment: shapeState.textVerticalAlignment,
-        fontSize: shapeState.fontSize,
-        bold: shapeState.bold,
-        italic: shapeState.italic,
-        lockAspectRatio: shapeState.lockAspectRatio,
+        text: shapeState.bindingMode === "StaticText" ? shapeState.text : "",
       });
+      setActiveShape(inserted);
+      setShapeState((prev) => ({ ...prev, shapeName: inserted.name, width: inserted.width, height: inserted.height }));
+      setShapeAddOpen(false);
       setStatusType("success");
-      setStatus(`Shape value bound to named range "${target}".`);
+      setStatus(`Inserted ${inserted.shapeType} on ${inserted.anchorAddress}.`);
     } catch (error) {
       setStatusType("error");
       const message = error instanceof Error ? error.message : String(error);
-      setStatus(`Named range binding failed: ${message}`);
+      setStatus(`Insert shape failed: ${message}`);
     } finally {
       setIsSubmitting(false);
     }
-  };
-
-  const applyShapeAnchorFormula = async () => {
-    if (!activeShape || !shapeState.formula.trim()) {
-      return;
-    }
-    await runAction("Apply anchor cell formula", async () => {
-      await applyFormulaToShapeAnchorCell(
-        activeShape.sheet,
-        activeShape.anchorAddress,
-        shapeState.formula,
-        activeShape.name
-      );
-    });
-  };
-
-  const applyThemeColorToShapeField = (
-    field: "fillColor" | "outlineColor" | "fontColor",
-    color: string
-  ) => {
-    setShapeState((prev) => ({ ...prev, [field]: color }));
-  };
-
-  const applyShapeNoFill = () => {
-    setShapeState((prev) => ({ ...prev, fillColor: NO_FILL_COLOR_TOKEN }));
   };
 
   const submitShapeRename = async () => {
@@ -3520,11 +3543,7 @@ const App: React.FC = () => {
       return;
     }
     await runAction("Move shape to selected cell", async () => {
-      const moved = await moveShapeToSelection(
-        activeShape.sheet,
-        activeShape.name,
-        activeShape.anchorAddress
-      );
+      const moved = await moveShapeToSelection(activeShape.sheet, activeShape.name, activeShape.anchorAddress);
       setActiveShape((prev) => (prev ? { ...prev, anchorAddress: moved.anchorAddress } : prev));
     });
   };
@@ -3534,17 +3553,10 @@ const App: React.FC = () => {
       <div className={styles.sectionCard}>
         <Text className={styles.sectionTitle}>Shapes/Text Boxes</Text>
         <div className={styles.shapeToolbar}>
-          <button
-            type="button"
-            className={styles.plusBtn}
-            title="Add shape or text box"
-            onClick={() => setShapeAddOpen(true)}
-          >
+          <button type="button" className={styles.plusBtn} title="Add shape or text box" onClick={() => setShapeAddOpen(true)}>
             +
           </button>
-          <Text className={styles.shapeHint}>
-            Add a shape/text box on the active cell and manage formatting/binding below.
-          </Text>
+          <Text className={styles.shapeHint}>Formatting is now applied automatically as you edit values.</Text>
         </div>
         {activeShape ? (
           <>
@@ -3553,475 +3565,116 @@ const App: React.FC = () => {
               <div className={styles.collapsibleBody}>
                 <div className={styles.modalInlineRow}>
                   <div className={styles.modalRow}>
-                    <Text className={styles.modalLabel}>Active Shape</Text>
-                    <Input
-                      value={shapeState.shapeName || activeShape.name}
-                      onChange={(_, data) =>
-                        setShapeState((prev) => ({ ...prev, shapeName: data.value }))
-                      }
-                    />
+                    <Text className={styles.modalLabel}>Name</Text>
+                    <Input value={shapeState.shapeName || activeShape.name} onChange={(_, data) => setShapeState((prev) => ({ ...prev, shapeName: data.value }))} />
                   </div>
                   <div className={styles.modalRow}>
                     <Text className={styles.modalLabel}>Anchor Cell</Text>
                     <Input value={`${activeShape.sheet}!${activeShape.anchorAddress}`} readOnly />
                   </div>
                 </div>
+                <div className={styles.modalInlineRow}>
+                  <div className={styles.modalRow}>
+                    <Text className={styles.modalLabel}>Fill</Text>
+                    <Select className={styles.smallSelect} value={shapeState.fillColor} onChange={(_, data) => setShapeState((prev) => ({ ...prev, fillColor: data.value }))}>
+                      {SHAPE_COLOR_OPTIONS.map((opt) => <option key={`fill-${opt.value}`} value={opt.value}>{opt.label}</option>)}
+                    </Select>
+                  </div>
+                  <div className={styles.modalRow}>
+                    <Text className={styles.modalLabel}>Outline</Text>
+                    <Select className={styles.smallSelect} value={shapeState.outlineColor} onChange={(_, data) => setShapeState((prev) => ({ ...prev, outlineColor: data.value }))}>
+                      {SHAPE_COLOR_OPTIONS.filter((opt) => opt.value !== NO_FILL_COLOR_TOKEN).map((opt) => <option key={`outline-${opt.value}`} value={opt.value}>{opt.label}</option>)}
+                    </Select>
+                  </div>
+                  <div className={styles.modalRow}>
+                    <Text className={styles.modalLabel}>Font Color</Text>
+                    <Select className={styles.smallSelect} value={shapeState.fontColor} onChange={(_, data) => setShapeState((prev) => ({ ...prev, fontColor: data.value }))}>
+                      {SHAPE_COLOR_OPTIONS.filter((opt) => opt.value !== NO_FILL_COLOR_TOKEN).map((opt) => <option key={`font-${opt.value}`} value={opt.value}>{opt.label}</option>)}
+                    </Select>
+                  </div>
+                </div>
+                <div className={styles.modalInlineRow}>
+                  <div className={styles.modalRow}>
+                    <Text className={styles.modalLabel}>Binding Source</Text>
+                    <Select className={styles.smallSelect} value={shapeState.bindingMode} onChange={(_, data) => setShapeState((prev) => ({ ...prev, bindingMode: data.value as ShapeEditorState["bindingMode"] }))}>
+                      <option value="StaticText">Static Text</option>
+                      <option value="NamedRange">Named Range</option>
+                      <option value="Formula">Formula</option>
+                    </Select>
+                  </div>
+                  {shapeState.bindingMode === "StaticText" ? (
+                    <div className={styles.modalRow}>
+                      <Text className={styles.modalLabel}>Text</Text>
+                      <Input value={shapeState.text} onChange={(_, data) => setShapeState((prev) => ({ ...prev, text: data.value }))} />
+                    </div>
+                  ) : null}
+                  {shapeState.bindingMode === "NamedRange" ? (
+                    <div className={styles.modalRow}>
+                      <Text className={styles.modalLabel}>Named Range</Text>
+                      <Input value={shapeState.valueBinding} onChange={(_, data) => setShapeState((prev) => ({ ...prev, valueBinding: data.value }))} />
+                      {shapeValueSuggestions.length > 0 ? (
+                        <div className={styles.suggestionsBox}>
+                          {shapeValueSuggestions.map((name) => (
+                            <button key={name} type="button" className={styles.suggestionBtn} onClick={() => setShapeState((prev) => ({ ...prev, valueBinding: name }))}>
+                              nm {name}
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {shapeState.bindingMode === "Formula" ? (
+                    <div className={styles.modalRow}>
+                      <Text className={styles.modalLabel}>Formula</Text>
+                      <Input value={shapeState.formula} onChange={(_, data) => setShapeState((prev) => ({ ...prev, formula: data.value }))} placeholder='=TEXT(TODAY(),"yyyy-mm-dd")' />
+                    </div>
+                  ) : null}
+                </div>
                 <div className={styles.topActions}>
-                  <Button className={styles.miniBtn} onClick={() => void submitShapeRename()}>
-                    Rename Shape
-                  </Button>
-                  <Button className={styles.miniBtn} onClick={() => void moveShapeToGridSelection()}>
-                    Move to Grid Selection
-                  </Button>
+                  <Button className={styles.miniBtn} onClick={() => void submitShapeRename()}>Rename Shape</Button>
+                  <Button className={styles.miniBtn} onClick={() => void moveShapeToGridSelection()}>Snap to Selected Cell</Button>
                 </div>
               </div>
             </details>
             <details className={styles.collapsibleSection} open>
-              <summary className={styles.collapsibleSummary}>Appearance</summary>
+              <summary className={styles.collapsibleSummary}>Size & Shape Effects</summary>
               <div className={styles.collapsibleBody}>
-            <div className={styles.modalInlineRow}>
-              <div className={styles.modalRow}>
-                <Text className={styles.modalLabel}>Fill</Text>
-                <div className={styles.swatchRow}>
-                  <Button
-                    className={`${styles.noFillBtn} ${
-                      shapeState.fillColor === NO_FILL_COLOR_TOKEN ? styles.noFillBtnSelected : ""
-                    }`}
-                    onClick={applyShapeNoFill}
-                  >
-                    No Fill
-                  </Button>
-                  {themeColorSwatches.map((swatch) => (
-                    <Button
-                      key={`fill-${swatch}`}
-                      className={`${styles.swatchBtn} ${
-                        shapeState.fillColor === swatch ? styles.swatchBtnSelected : ""
-                      }`}
-                      style={{ backgroundColor: swatch }}
-                      title={`Theme color ${swatch}`}
-                      onClick={() => applyThemeColorToShapeField("fillColor", swatch)}
-                    />
-                  ))}
+                <div className={styles.modalInlineRow}>
+                  <div className={styles.modalRow}><Text className={styles.modalLabel}>Width</Text><input className={styles.numberInput} type="number" min={20} value={shapeState.width} onChange={(e) => setShapeState((prev) => ({ ...prev, width: Number(e.target.value) || prev.width }))} /></div>
+                  <div className={styles.modalRow}><Text className={styles.modalLabel}>Height</Text><input className={styles.numberInput} type="number" min={20} value={shapeState.height} onChange={(e) => setShapeState((prev) => ({ ...prev, height: Number(e.target.value) || prev.height }))} /></div>
+                  <div className={styles.modalRow}><Text className={styles.modalLabel}>Rotation</Text><input className={styles.numberInput} type="number" min={-360} max={360} value={shapeState.rotation} onChange={(e) => setShapeState((prev) => ({ ...prev, rotation: Number(e.target.value) || 0 }))} /></div>
+                  <div className={styles.modalRow}><Text className={styles.modalLabel}>Transparency (%)</Text><input className={styles.numberInput} type="number" min={0} max={100} value={shapeState.fillTransparency} onChange={(e) => setShapeState((prev) => ({ ...prev, fillTransparency: Number(e.target.value) || 0 }))} /></div>
                 </div>
-                <input
-                  className={styles.swatchInput}
-                  type="color"
-                  value={shapeColorInputValue(shapeState.fillColor, "#ffffff")}
-                  onChange={(event) =>
-                    setShapeState((prev) => ({ ...prev, fillColor: event.target.value }))
-                  }
-                />
-              </div>
-              <div className={styles.modalRow}>
-                <Text className={styles.modalLabel}>Outline</Text>
-                <div className={styles.swatchRow}>
-                  {themeColorSwatches.map((swatch) => (
-                    <Button
-                      key={`outline-${swatch}`}
-                      className={`${styles.swatchBtn} ${
-                        shapeState.outlineColor === swatch ? styles.swatchBtnSelected : ""
-                      }`}
-                      style={{ backgroundColor: swatch }}
-                      title={`Theme color ${swatch}`}
-                      onClick={() => applyThemeColorToShapeField("outlineColor", swatch)}
-                    />
-                  ))}
+                <div className={styles.modalInlineRow}>
+                  <div className={styles.modalRow}><Text className={styles.modalLabel}>Shadow</Text><Select className={styles.smallSelect} value={shapeState.effectShadow} onChange={(_, data) => setShapeState((prev) => ({ ...prev, effectShadow: data.value }))}><option value="None">None</option><option value="Outer">Outer</option><option value="Inner">Inner</option><option value="Perspective">Perspective</option></Select></div>
+                  <div className={styles.modalRow}><Text className={styles.modalLabel}>Bevel</Text><Select className={styles.smallSelect} value={shapeState.effectBevel} onChange={(_, data) => setShapeState((prev) => ({ ...prev, effectBevel: data.value }))}><option value="None">None</option><option value="Circle">Circle</option><option value="RelaxedInset">Relaxed Inset</option><option value="SoftRound">Soft Round</option></Select></div>
+                  <div className={styles.modalRow}><Text className={styles.modalLabel}>Reflection</Text><Select className={styles.smallSelect} value={shapeState.effectReflection} onChange={(_, data) => setShapeState((prev) => ({ ...prev, effectReflection: data.value }))}><option value="None">None</option><option value="Tight">Tight</option><option value="Half">Half</option><option value="Full">Full</option></Select></div>
                 </div>
-                <input
-                  className={styles.swatchInput}
-                  type="color"
-                  value={shapeColorInputValue(shapeState.outlineColor, "#000000")}
-                  onChange={(event) =>
-                    setShapeState((prev) => ({ ...prev, outlineColor: event.target.value }))
-                  }
-                />
-              </div>
-            </div>
-            <div className={styles.modalInlineRow}>
-              <div className={styles.modalRow}>
-                <Text className={styles.modalLabel}>Font Color</Text>
-                <div className={styles.swatchRow}>
-                  {themeColorSwatches.map((swatch) => (
-                    <Button
-                      key={`font-${swatch}`}
-                      className={`${styles.swatchBtn} ${
-                        shapeState.fontColor === swatch ? styles.swatchBtnSelected : ""
-                      }`}
-                      style={{ backgroundColor: swatch }}
-                      title={`Theme color ${swatch}`}
-                      onClick={() => applyThemeColorToShapeField("fontColor", swatch)}
-                    />
-                  ))}
-                </div>
-                <input
-                  className={styles.swatchInput}
-                  type="color"
-                  value={shapeColorInputValue(shapeState.fontColor, "#1f1f1f")}
-                  onChange={(event) =>
-                    setShapeState((prev) => ({ ...prev, fontColor: event.target.value }))
-                  }
-                />
-              </div>
-              <div className={styles.modalRow}>
-                <Text className={styles.modalLabel}>Shape Text</Text>
-                <Input
-                  value={shapeState.text}
-                  onChange={(_, data) => setShapeState((prev) => ({ ...prev, text: data.value }))}
-                />
-              </div>
-            </div>
-            <div className={styles.modalInlineRow}>
-              <div className={styles.modalRow}>
-                <Text className={styles.modalLabel}>Width</Text>
-                <input
-                  className={styles.numberInput}
-                  type="number"
-                  min={20}
-                  value={shapeState.width}
-                  onChange={(event) =>
-                    setShapeState((prev) => ({
-                      ...prev,
-                      width: Number(event.target.value) || prev.width,
-                    }))
-                  }
-                />
-              </div>
-              <div className={styles.modalRow}>
-                <Text className={styles.modalLabel}>Height</Text>
-                <input
-                  className={styles.numberInput}
-                  type="number"
-                  min={20}
-                  value={shapeState.height}
-                  onChange={(event) =>
-                    setShapeState((prev) => ({
-                      ...prev,
-                      height: Number(event.target.value) || prev.height,
-                    }))
-                  }
-                />
-              </div>
-            </div>
-            <div className={styles.modalInlineRow}>
-              <div className={styles.modalRow}>
-                <Text className={styles.modalLabel}>Rotation</Text>
-                <input
-                  className={styles.numberInput}
-                  type="number"
-                  min={-360}
-                  max={360}
-                  value={shapeState.rotation}
-                  onChange={(event) =>
-                    setShapeState((prev) => ({
-                      ...prev,
-                      rotation: Number(event.target.value) || 0,
-                    }))
-                  }
-                />
-              </div>
-              <div className={styles.modalRow}>
-                <Text className={styles.modalLabel}>Outline Weight</Text>
-                <input
-                  className={styles.numberInput}
-                  type="number"
-                  min={0.25}
-                  step={0.25}
-                  value={shapeState.lineWeight}
-                  onChange={(event) =>
-                    setShapeState((prev) => ({
-                      ...prev,
-                      lineWeight: Number(event.target.value) || prev.lineWeight,
-                    }))
-                  }
-                />
-              </div>
-            </div>
-            <div className={styles.modalInlineRow}>
-              <div className={styles.modalRow}>
-                <Text className={styles.modalLabel}>Fill Transparency (%)</Text>
-                <input
-                  className={styles.numberInput}
-                  type="number"
-                  min={0}
-                  max={100}
-                  value={shapeState.fillTransparency}
-                  onChange={(event) =>
-                    setShapeState((prev) => ({
-                      ...prev,
-                      fillTransparency: Number(event.target.value) || 0,
-                    }))
-                  }
-                />
-              </div>
-              <div className={styles.modalRow}>
-                <Text className={styles.modalLabel}>Font Size</Text>
-                <input
-                  className={styles.numberInput}
-                  type="number"
-                  min={6}
-                  max={72}
-                  value={shapeState.fontSize}
-                  onChange={(event) =>
-                    setShapeState((prev) => ({
-                      ...prev,
-                      fontSize: Number(event.target.value) || prev.fontSize,
-                    }))
-                  }
-                />
-              </div>
-            </div>
-            <div className={styles.modalInlineRow}>
-              <div className={styles.modalRow}>
-                <Text className={styles.modalLabel}>Text Horizontal Alignment</Text>
-                <Select
-                  className={styles.smallSelect}
-                  value={shapeState.textHorizontalAlignment}
-                  onChange={(_, data) =>
-                    setShapeState((prev) => ({
-                      ...prev,
-                      textHorizontalAlignment: data.value as ShapeEditorState["textHorizontalAlignment"],
-                    }))
-                  }
-                >
-                  <option value="Left">Left</option>
-                  <option value="Center">Center</option>
-                  <option value="Right">Right</option>
-                </Select>
-              </div>
-              <div className={styles.modalRow}>
-                <Text className={styles.modalLabel}>Text Vertical Alignment</Text>
-                <Select
-                  className={styles.smallSelect}
-                  value={shapeState.textVerticalAlignment}
-                  onChange={(_, data) =>
-                    setShapeState((prev) => ({
-                      ...prev,
-                      textVerticalAlignment: data.value as ShapeEditorState["textVerticalAlignment"],
-                    }))
-                  }
-                >
-                  <option value="Top">Top</option>
-                  <option value="Middle">Middle</option>
-                  <option value="Bottom">Bottom</option>
-                </Select>
-              </div>
-            </div>
-            <div className={styles.modalInlineRow}>
-              <label className={styles.checkboxRow}>
-                <input
-                  type="checkbox"
-                  checked={shapeState.bold}
-                  onChange={(event) =>
-                    setShapeState((prev) => ({ ...prev, bold: event.target.checked }))
-                  }
-                />
-                Bold
-              </label>
-              <label className={styles.checkboxRow}>
-                <input
-                  type="checkbox"
-                  checked={shapeState.italic}
-                  onChange={(event) =>
-                    setShapeState((prev) => ({ ...prev, italic: event.target.checked }))
-                  }
-                />
-                Italic
-              </label>
-              <label className={styles.checkboxRow}>
-                <input
-                  type="checkbox"
-                  checked={shapeState.lockAspectRatio}
-                  onChange={(event) =>
-                    setShapeState((prev) => ({ ...prev, lockAspectRatio: event.target.checked }))
-                  }
-                />
-                Lock Aspect Ratio
-              </label>
-            </div>
               </div>
             </details>
-            <details className={styles.collapsibleSection}>
-              <summary className={styles.collapsibleSummary}>Binding</summary>
-              <div className={styles.collapsibleBody}>
-            <div className={styles.modalRow}>
-              <Text className={styles.modalLabel}>Shape Value (Named Range Intellisense)</Text>
-              <Input
-                value={shapeState.valueBinding}
-                onChange={(_, data) => {
-                  setShapeSuggestionIndex(0);
-                  setShapeState((prev) => ({ ...prev, valueBinding: data.value }));
-                }}
-              />
-              {shapeValueSuggestions.length > 0 ? (
-                <div className={styles.suggestionsBox}>
-                  {shapeValueSuggestions.map((name, index) => (
-                    <button
-                      key={name}
-                      type="button"
-                      className={`${styles.suggestionBtn} ${shapeSuggestionIndex === index ? styles.suggestionBtnActive : ""}`}
-                      onMouseEnter={() => setShapeSuggestionIndex(index)}
-                      onClick={() => void applyNamedRangeToShapeText(name)}
-                    >
-                      nm {name}
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-            <div className={styles.modalRow}>
-              <Text className={styles.modalLabel}>
-                Formula Editor (writes into anchor cell; font matches fill to appear hidden)
-              </Text>
-              <Input
-                value={shapeState.formula}
-                onChange={(_, data) => setShapeState((prev) => ({ ...prev, formula: data.value }))}
-                placeholder='=TEXT(TODAY(),"yyyy-mm-dd")'
-              />
-            </div>
-              </div>
-            </details>
-            <div className={styles.topActions}>
-              <Button className={styles.miniBtn} onClick={() => void applyShapeFormatting()}>
-                Update Shape Formatting
-              </Button>
-              <Button className={styles.miniBtn} onClick={() => void applyNamedRangeToShapeText()}>
-                Apply Named Range Value
-              </Button>
-              <Button className={styles.miniBtn} onClick={() => void applyShapeAnchorFormula()}>
-                Apply Formula to Anchor Cell
-              </Button>
-            </div>
           </>
         ) : (
-          <Text className={styles.placeholder}>
-            No active shape in this session. Use the + button to insert one on the selected cell.
-          </Text>
+          <Text className={styles.placeholder}>No active shape in this session. Use the + button to insert one on the selected cell.</Text>
         )}
       </div>
       {shapeAddOpen ? (
         <div className={styles.modalBackdrop}>
           <div className={styles.modal}>
             <Text className={styles.modalTitle}>Insert Shape/Text Box</Text>
-            <div className={styles.modalRow}>
-              <Text className={styles.modalLabel}>Type</Text>
-              <Select
-                className={styles.smallSelect}
-                value={shapeState.shapeType}
-                onChange={(_, data) =>
-                  setShapeState((prev) => ({
-                    ...prev,
-                    shapeType: data.value as InsertableShapeType,
-                  }))
-                }
-              >
-                <option value="Rectangle">Rectangle</option>
-                <option value="RoundedRectangle">Rounded Rectangle</option>
-                <option value="Chevron">Chevron</option>
-                <option value="Hexagon">Hexagon</option>
-                <option value="Diamond">Diamond</option>
-                <option value="Oval">Oval</option>
-                <option value="TextBox">Text Box</option>
-              </Select>
-            </div>
             <div className={styles.modalInlineRow}>
               <div className={styles.modalRow}>
-                <Text className={styles.modalLabel}>Fill</Text>
-                <div className={styles.swatchRow}>
-                  <Button
-                    className={`${styles.noFillBtn} ${
-                      shapeState.fillColor === NO_FILL_COLOR_TOKEN ? styles.noFillBtnSelected : ""
-                    }`}
-                    onClick={applyShapeNoFill}
-                  >
-                    No Fill
-                  </Button>
-                  {themeColorSwatches.map((swatch) => (
-                    <Button
-                      key={`insert-fill-${swatch}`}
-                      className={`${styles.swatchBtn} ${
-                        shapeState.fillColor === swatch ? styles.swatchBtnSelected : ""
-                      }`}
-                      style={{ backgroundColor: swatch }}
-                      onClick={() => applyThemeColorToShapeField("fillColor", swatch)}
-                    />
-                  ))}
-                </div>
-                <input
-                  className={styles.swatchInput}
-                  type="color"
-                  value={shapeColorInputValue(shapeState.fillColor, "#ffffff")}
-                  onChange={(event) =>
-                    setShapeState((prev) => ({ ...prev, fillColor: event.target.value }))
-                  }
-                />
+                <Text className={styles.modalLabel}>Type</Text>
+                <Select className={styles.smallSelect} value={shapeState.shapeType} onChange={(_, data) => setShapeState((prev) => ({ ...prev, shapeType: data.value as InsertableShapeType }))}>
+                  <option value="Rectangle">Rectangle</option><option value="RoundedRectangle">Rounded Rectangle</option><option value="Chevron">Chevron</option><option value="Hexagon">Hexagon</option><option value="Oval">Oval</option><option value="TextBox">Text Box</option>
+                </Select>
               </div>
-              <div className={styles.modalRow}>
-                <Text className={styles.modalLabel}>Outline</Text>
-                <div className={styles.swatchRow}>
-                  {themeColorSwatches.map((swatch) => (
-                    <Button
-                      key={`insert-outline-${swatch}`}
-                      className={`${styles.swatchBtn} ${
-                        shapeState.outlineColor === swatch ? styles.swatchBtnSelected : ""
-                      }`}
-                      style={{ backgroundColor: swatch }}
-                      onClick={() => applyThemeColorToShapeField("outlineColor", swatch)}
-                    />
-                  ))}
-                </div>
-                <input
-                  className={styles.swatchInput}
-                  type="color"
-                  value={shapeColorInputValue(shapeState.outlineColor, "#000000")}
-                  onChange={(event) =>
-                    setShapeState((prev) => ({ ...prev, outlineColor: event.target.value }))
-                  }
-                />
-              </div>
-            </div>
-            <div className={styles.modalInlineRow}>
-              <div className={styles.modalRow}>
-                <Text className={styles.modalLabel}>Font Color</Text>
-                <div className={styles.swatchRow}>
-                  {themeColorSwatches.map((swatch) => (
-                    <Button
-                      key={`insert-font-${swatch}`}
-                      className={`${styles.swatchBtn} ${
-                        shapeState.fontColor === swatch ? styles.swatchBtnSelected : ""
-                      }`}
-                      style={{ backgroundColor: swatch }}
-                      onClick={() => applyThemeColorToShapeField("fontColor", swatch)}
-                    />
-                  ))}
-                </div>
-                <input
-                  className={styles.swatchInput}
-                  type="color"
-                  value={shapeColorInputValue(shapeState.fontColor, "#1f1f1f")}
-                  onChange={(event) =>
-                    setShapeState((prev) => ({ ...prev, fontColor: event.target.value }))
-                  }
-                />
-              </div>
-              <div className={styles.modalRow}>
-                <Text className={styles.modalLabel}>Text</Text>
-                <Input
-                  value={shapeState.text}
-                  onChange={(_, data) => setShapeState((prev) => ({ ...prev, text: data.value }))}
-                />
-              </div>
+              <div className={styles.modalRow}><Text className={styles.modalLabel}>Fill</Text><Select className={styles.smallSelect} value={shapeState.fillColor} onChange={(_, data) => setShapeState((prev) => ({ ...prev, fillColor: data.value }))}>{SHAPE_COLOR_OPTIONS.map((opt) => <option key={`insert-fill-${opt.value}`} value={opt.value}>{opt.label}</option>)}</Select></div>
+              <div className={styles.modalRow}><Text className={styles.modalLabel}>Outline</Text><Select className={styles.smallSelect} value={shapeState.outlineColor} onChange={(_, data) => setShapeState((prev) => ({ ...prev, outlineColor: data.value }))}>{SHAPE_COLOR_OPTIONS.filter((opt) => opt.value !== NO_FILL_COLOR_TOKEN).map((opt) => <option key={`insert-outline-${opt.value}`} value={opt.value}>{opt.label}</option>)}</Select></div>
+              <div className={styles.modalRow}><Text className={styles.modalLabel}>Font</Text><Select className={styles.smallSelect} value={shapeState.fontColor} onChange={(_, data) => setShapeState((prev) => ({ ...prev, fontColor: data.value }))}>{SHAPE_COLOR_OPTIONS.filter((opt) => opt.value !== NO_FILL_COLOR_TOKEN).map((opt) => <option key={`insert-font-${opt.value}`} value={opt.value}>{opt.label}</option>)}</Select></div>
             </div>
             <div className={styles.modalActions}>
-              <Button className={styles.miniBtn} onClick={() => setShapeAddOpen(false)}>
-                Cancel
-              </Button>
-              <Button
-                className={styles.miniBtn}
-                disabled={isSubmitting}
-                onClick={() => void insertShapeFromSelection()}
-              >
-                Insert on Active Cell
-              </Button>
+              <Button className={styles.miniBtn} onClick={() => setShapeAddOpen(false)}>Cancel</Button>
+              <Button className={styles.miniBtn} disabled={isSubmitting} onClick={() => void insertShapeFromSelection()}>Insert on Active Cell</Button>
             </div>
           </div>
         </div>
