@@ -15,22 +15,31 @@ import {
 import {
   CellStylePreset,
   FormulaEvaluationResult,
+  InsertableShapeType,
+  InsertedShapeRecord,
   NamedRangeRecord,
   TableRecord,
+  addShapeOnActiveCell,
   addRectangleShape,
   applyAccentFill,
   applyCellStylePreset,
+  applyFormulaToShapeAnchorCell,
   applyTableStyle,
   deleteNamedRangeWithOptions,
   getCurrentSelectionAddress,
+  getNamedRangeValueText,
   getNamedRanges,
   getTables,
   insertText,
   moveNamedRange,
+  moveShapeToSelection,
+  renameShape,
   refreshPivotTables,
   evaluateFormula,
   selectNamedRangeAddress,
   toggleGridlines,
+  ShapeFormatOptions,
+  updateShapeFormatting,
   updateTableName,
   updateNamedRange,
 } from "../taskpane";
@@ -153,6 +162,28 @@ interface CustomFormulaScheme {
   palette: FormulaColorPalette;
 }
 
+interface ShapeEditorState {
+  shapeName: string;
+  shapeType: InsertableShapeType;
+  fillColor: string;
+  outlineColor: string;
+  fontColor: string;
+  text: string;
+  valueBinding: string;
+  formula: string;
+  lineWeight: number;
+  fillTransparency: number;
+  width: number;
+  height: number;
+  rotation: number;
+  textHorizontalAlignment: "Left" | "Center" | "Right";
+  textVerticalAlignment: "Top" | "Middle" | "Bottom";
+  fontSize: number;
+  bold: boolean;
+  italic: boolean;
+  lockAspectRatio: boolean;
+}
+
 const DEFAULT_TABLE_STYLE = "TableStyleMedium2";
 const FORMULA_TOKEN_KEYS: Array<keyof FormulaColorPalette> = [
   "function",
@@ -207,6 +238,20 @@ const FORMULA_COLOR_SCHEMES: Record<FormulaColorScheme, FormulaColorPalette> = {
   },
 };
 
+const WORKBOOK_THEME_SWATCHES = [
+  "#4472C4",
+  "#ED7D31",
+  "#A5A5A5",
+  "#FFC000",
+  "#5B9BD5",
+  "#70AD47",
+  "#264478",
+  "#9E480E",
+  "#636363",
+  "#997300",
+];
+const NO_FILL_COLOR_TOKEN = "__NO_FILL__";
+
 const NAMES_TABS: SecondaryTab[] = [
   { id: "ranges", label: "Ranges" },
   { id: "tables", label: "Tables" },
@@ -217,6 +262,7 @@ const NAMES_TABS: SecondaryTab[] = [
 const FORMAT_TABS: SecondaryTab[] = [
   { id: "cells", label: "Cells" },
   { id: "styles", label: "Styles" },
+  { id: "shapes", label: "Shapes/Text Boxes" },
   { id: "view", label: "View" },
 ];
 
@@ -605,6 +651,91 @@ const useStyles = makeStyles({
     fontSize: "9px",
     color: "#495463",
   },
+  shapeToolbar: {
+    display: "flex",
+    gap: "8px",
+    alignItems: "center",
+  },
+  plusBtn: {
+    minWidth: "30px",
+    height: "28px",
+    borderRadius: "50%",
+    border: "1px solid #c8c8c8",
+    backgroundColor: "#ffffff",
+    fontSize: "16px",
+    lineHeight: 1,
+  },
+  shapeHint: {
+    fontSize: "10px",
+    color: "#4e5a69",
+  },
+  swatchRow: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "4px",
+  },
+  swatchBtn: {
+    width: "16px",
+    height: "16px",
+    border: "1px solid #c8c8c8",
+    borderRadius: "3px",
+    padding: "0",
+    minWidth: "16px",
+  },
+  swatchBtnSelected: {
+    border: "2px solid #1f4e78",
+  },
+  noFillBtn: {
+    minWidth: "60px",
+    height: "16px",
+    border: "1px solid #c8c8c8",
+    borderRadius: "3px",
+    fontSize: "9px",
+    lineHeight: "14px",
+    backgroundColor: "#ffffff",
+    padding: "0 4px",
+  },
+  noFillBtnSelected: {
+    border: "2px solid #1f4e78",
+    color: "#1f4e78",
+    fontWeight: 700,
+  },
+  swatchInput: {
+    width: "42px",
+    height: "24px",
+    border: "1px solid #c8c8c8",
+    backgroundColor: "transparent",
+    padding: 0,
+  },
+  numberInput: {
+    width: "100%",
+    height: "24px",
+    fontSize: "10px",
+    border: "1px solid #b7b7b7",
+    borderRadius: "4px",
+    padding: "0 6px",
+    boxSizing: "border-box",
+  },
+  collapsibleSection: {
+    border: "1px solid #e0e0e0",
+    borderRadius: "6px",
+    backgroundColor: "#fafafa",
+    overflow: "hidden",
+  },
+  collapsibleSummary: {
+    cursor: "pointer",
+    listStyle: "none",
+    padding: "7px 9px",
+    fontSize: "10px",
+    fontWeight: 700,
+    backgroundColor: "#f3f3f3",
+    borderBottom: "1px solid #e0e0e0",
+  },
+  collapsibleBody: {
+    padding: "8px",
+    display: "grid",
+    gap: "8px",
+  },
   formulaMenuBar: {
     display: "flex",
     alignItems: "center",
@@ -925,6 +1056,30 @@ const App: React.FC = () => {
   const [formulaCursor, setFormulaCursor] = useState<number>(formulaText.length);
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState<number>(0);
   const [formulaContextMenu, setFormulaContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const [shapeAddOpen, setShapeAddOpen] = useState<boolean>(false);
+  const [activeShape, setActiveShape] = useState<InsertedShapeRecord | null>(null);
+  const [shapeState, setShapeState] = useState<ShapeEditorState>({
+    shapeName: "",
+    shapeType: "Rectangle",
+    fillColor: "#E3F2FD",
+    outlineColor: "#1F4E78",
+    fontColor: "#1F1F1F",
+    text: "",
+    valueBinding: "",
+    formula: "",
+    lineWeight: 1,
+    fillTransparency: 0,
+    width: 110,
+    height: 34,
+    rotation: 0,
+    textHorizontalAlignment: "Center",
+    textVerticalAlignment: "Middle",
+    fontSize: 11,
+    bold: false,
+    italic: false,
+    lockAspectRatio: false,
+  });
+  const [shapeSuggestionIndex, setShapeSuggestionIndex] = useState<number>(0);
   const formulaEditorRef = useRef<HTMLTextAreaElement | null>(null);
   const formulaHighlightRef = useRef<HTMLPreElement | null>(null);
   const formulaLineNumbersRef = useRef<HTMLDivElement | null>(null);
@@ -1028,6 +1183,9 @@ const App: React.FC = () => {
         void loadTables();
       }
     }
+    if (primaryTab === "Format" && secondaryTabId === "shapes" && namedRanges.length === 0) {
+      void loadRanges();
+    }
   }, [primaryTab, secondaryTabId, namedRanges.length, tables.length]);
 
   const filteredAndSortedRanges = useMemo(() => {
@@ -1060,9 +1218,13 @@ const App: React.FC = () => {
     });
   }, [tables, tableFilters, tableSortColumn, tableSortDirection]);
 
+  const selectableVisibleRanges = useMemo(
+    () => filteredAndSortedRanges.filter((item) => item.kind === "NamedRange"),
+    [filteredAndSortedRanges]
+  );
   const allVisibleSelected =
-    filteredAndSortedRanges.length > 0 &&
-    filteredAndSortedRanges.every((item) => selectedIds.has(item.id));
+    selectableVisibleRanges.length > 0 &&
+    selectableVisibleRanges.every((item) => selectedIds.has(item.id));
   const hasActiveFilters = RANGE_COLUMNS.some((col) => columnFilters[col].trim().length > 0);
 
   const clearFilters = () => {
@@ -1625,7 +1787,9 @@ const App: React.FC = () => {
   }, [formulaText, formulaCursor]);
 
   const colorizedFormulaTokens = useMemo(() => {
-    const namedSet = new Set(namedRanges.map((item) => item.name.toUpperCase()));
+    const namedSet = new Set(
+      namedRanges.filter((item) => item.kind === "NamedRange").map((item) => item.name.toUpperCase())
+    );
     const tableSet = new Set(tables.map((item) => item.name.toUpperCase()));
     const localSet = new Set(localVariableSuggestions.map((item) => item.name.toUpperCase()));
     const functionSet = new Set<string>(EXCEL_FUNCTION_NAMES as readonly string[]);
@@ -1746,10 +1910,12 @@ const App: React.FC = () => {
       };
     });
 
-    const names: FormulaSuggestion[] = namedRanges.map((item) => ({
-      name: item.name,
-      kind: "Name",
-    }));
+    const names: FormulaSuggestion[] = namedRanges
+      .filter((item) => item.kind === "NamedRange")
+      .map((item) => ({
+        name: item.name,
+        kind: "Name",
+      }));
     const tableItems: FormulaSuggestion[] = tables.map((item) => ({
       name: item.name,
       kind: "Table",
@@ -1856,7 +2022,9 @@ const App: React.FC = () => {
       };
     }
 
-    const namedMatch = namedRanges.find((item) => item.name.toUpperCase() === token);
+    const namedMatch = namedRanges.find(
+      (item) => item.kind === "NamedRange" && item.name.toUpperCase() === token
+    );
     if (namedMatch) {
       return {
         kind: "Name",
@@ -1962,7 +2130,9 @@ const App: React.FC = () => {
       const token = selection.address.includes("!")
         ? selection.address
         : `${selection.sheet}!${selection.address}`;
-      const rangeCandidates = namedRanges.length > 0 ? namedRanges : await getNamedRanges();
+      const rangeCandidates = (
+        namedRanges.length > 0 ? namedRanges : await getNamedRanges()
+      ).filter((item) => item.kind === "NamedRange");
       const match = rangeCandidates.find(
         (item) =>
           item.isRange &&
@@ -2095,7 +2265,9 @@ const App: React.FC = () => {
           setStatus("Go to definition is available for names and tables.");
           return;
         }
-        const nameMatch = namedRanges.find((item) => item.name === formulaReferenceHint.name);
+        const nameMatch = namedRanges.find(
+          (item) => item.kind === "NamedRange" && item.name === formulaReferenceHint.name
+        );
         if (nameMatch && nameMatch.isRange) {
           await selectNamedRangeAddress(nameMatch.address, nameMatch.sheet);
           setStatusType("success");
@@ -2297,13 +2469,18 @@ const App: React.FC = () => {
   };
 
   const bulkPreviewRows: BulkPreviewRow[] = useMemo(() => {
-    const selected = namedRanges.filter((item) => selectedIds.has(item.id));
+    const selected = namedRanges.filter(
+      (item) => item.kind === "NamedRange" && selectedIds.has(item.id)
+    );
     const existingByScope = new Map<string, Set<string>>();
 
     const getScopeKey = (scopeType: "Workbook" | "Worksheet", scope: string) =>
       `${scopeType}::${scope}`;
 
     namedRanges.forEach((item) => {
+      if (item.kind !== "NamedRange") {
+        return;
+      }
       const key = getScopeKey(item.scopeType, item.scope);
       if (!existingByScope.has(key)) {
         existingByScope.set(key, new Set());
@@ -2448,6 +2625,10 @@ const App: React.FC = () => {
   ]);
 
   const toggleRowSelection = (id: string) => {
+    const record = namedRanges.find((item) => item.id === id);
+    if (!record || record.kind !== "NamedRange") {
+      return;
+    }
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) {
@@ -2463,9 +2644,9 @@ const App: React.FC = () => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (allVisibleSelected) {
-        filteredAndSortedRanges.forEach((item) => next.delete(item.id));
+        selectableVisibleRanges.forEach((item) => next.delete(item.id));
       } else {
-        filteredAndSortedRanges.forEach((item) => next.add(item.id));
+        selectableVisibleRanges.forEach((item) => next.add(item.id));
       }
       return next;
     });
@@ -2492,6 +2673,9 @@ const App: React.FC = () => {
   };
 
   const openDelete = (record: NamedRangeRecord) => {
+    if (record.kind !== "NamedRange") {
+      return;
+    }
     setDeleteState({
       open: true,
       record,
@@ -2885,6 +3069,7 @@ const App: React.FC = () => {
                   <input
                     type="checkbox"
                     checked={selectedIds.has(item.id)}
+                    disabled={item.kind !== "NamedRange"}
                     onChange={() => toggleRowSelection(item.id)}
                   />
                 </td>
@@ -2909,6 +3094,7 @@ const App: React.FC = () => {
                     <Button
                       className={styles.rowActionTextBtn}
                       title="Delete named range"
+                      disabled={item.kind !== "NamedRange"}
                       onClick={() => openDelete(item)}
                     >
                       Delete
@@ -3021,25 +3207,28 @@ const App: React.FC = () => {
                     {inlineTableEdit?.id === table.id ? (
                       <>
                         <Button
-                          className={styles.rowActionBtn}
-                          icon={<Checkmark20Regular />}
+                          className={styles.rowActionTextBtn}
                           title="Save"
                           onClick={() => void saveInlineTableEdit(table)}
-                        />
+                        >
+                          Save
+                        </Button>
                         <Button
-                          className={styles.rowActionBtn}
-                          icon={<Dismiss20Regular />}
+                          className={styles.rowActionTextBtn}
                           title="Cancel"
                           onClick={() => setInlineTableEdit(null)}
-                        />
+                        >
+                          Cancel
+                        </Button>
                       </>
                     ) : (
                       <Button
-                        className={styles.rowActionBtn}
-                        icon={<Edit20Regular />}
+                        className={styles.rowActionTextBtn}
                         title="Inline edit"
                         onClick={() => startInlineTableEdit(table)}
-                      />
+                      >
+                        Edit
+                      </Button>
                     )}
                   </div>
                 </td>
@@ -3090,6 +3279,697 @@ const App: React.FC = () => {
         ))}
       </div>
     </div>
+  );
+
+  const themeColorSwatches = useMemo(() => {
+    const officeTheme = (globalThis as unknown as { Office?: { context?: { officeTheme?: any } } })
+      .Office?.context?.officeTheme;
+    const potential = [
+      officeTheme?.["bodyBackgroundColor"],
+      officeTheme?.["bodyForegroundColor"],
+      officeTheme?.["controlBackgroundColor"],
+      officeTheme?.["controlForegroundColor"],
+      officeTheme?.["accentColor"],
+      ...WORKBOOK_THEME_SWATCHES,
+    ];
+    const normalized = potential
+      .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+      .map((value) => {
+        const compact = value.trim();
+        if (/^#[0-9a-f]{6}$/i.test(compact)) {
+          return compact.toUpperCase();
+        }
+        return "";
+      })
+      .filter((value) => value.length > 0);
+    return Array.from(new Set(normalized));
+  }, []);
+
+  const shapeValueSuggestions = useMemo(() => {
+    const token = shapeState.valueBinding.trim().toLowerCase();
+    if (!token) {
+      return [];
+    }
+    return namedRanges
+      .filter((item) => item.kind === "NamedRange")
+      .map((item) => item.name)
+      .filter((name) => name.toLowerCase().includes(token))
+      .slice(0, 25);
+  }, [namedRanges, shapeState.valueBinding]);
+
+  const shapeColorInputValue = (value: string, fallback: string) =>
+    value === NO_FILL_COLOR_TOKEN ? fallback : value;
+
+  const insertShapeFromSelection = async () => {
+    setIsSubmitting(true);
+    try {
+      const inserted = await addShapeOnActiveCell({
+        shapeType: shapeState.shapeType,
+        fillColor: shapeState.fillColor,
+        outlineColor: shapeState.outlineColor,
+        fontColor: shapeState.fontColor,
+        text: shapeState.text,
+      });
+      setActiveShape(inserted);
+      setShapeState((prev) => ({
+        ...prev,
+        shapeName: inserted.name,
+        width: inserted.width,
+        height: inserted.height,
+      }));
+      setShapeAddOpen(false);
+      setStatusType("success");
+      setStatus(`Inserted ${inserted.shapeType} on ${inserted.anchorAddress}.`);
+    } catch (error) {
+      setStatusType("error");
+      const message = error instanceof Error ? error.message : String(error);
+      setStatus(`Insert shape failed: ${message}`);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const applyShapeFormatting = async () => {
+    if (!activeShape) {
+      return;
+    }
+    const options: ShapeFormatOptions = {
+      fillColor: shapeState.fillColor,
+      outlineColor: shapeState.outlineColor,
+      fontColor: shapeState.fontColor,
+      text: shapeState.text,
+      lineWeight: shapeState.lineWeight,
+      fillTransparency: shapeState.fillTransparency,
+      width: shapeState.width,
+      height: shapeState.height,
+      rotation: shapeState.rotation,
+      textHorizontalAlignment: shapeState.textHorizontalAlignment,
+      textVerticalAlignment: shapeState.textVerticalAlignment,
+      fontSize: shapeState.fontSize,
+      bold: shapeState.bold,
+      italic: shapeState.italic,
+      lockAspectRatio: shapeState.lockAspectRatio,
+    };
+    await runAction("Update shape formatting", async () => {
+      await updateShapeFormatting(activeShape.sheet, activeShape.name, options);
+    });
+  };
+
+  const applyNamedRangeToShapeText = async (rangeName?: string) => {
+    if (!activeShape) {
+      return;
+    }
+    const target = (rangeName ?? shapeState.valueBinding).trim();
+    if (!target) {
+      return;
+    }
+    setIsSubmitting(true);
+    try {
+      const valueText = await getNamedRangeValueText(target);
+      setShapeState((prev) => ({
+        ...prev,
+        valueBinding: target,
+        text: valueText,
+      }));
+      await updateShapeFormatting(activeShape.sheet, activeShape.name, {
+        fillColor: shapeState.fillColor,
+        outlineColor: shapeState.outlineColor,
+        fontColor: shapeState.fontColor,
+        text: valueText,
+        lineWeight: shapeState.lineWeight,
+        fillTransparency: shapeState.fillTransparency,
+        width: shapeState.width,
+        height: shapeState.height,
+        rotation: shapeState.rotation,
+        textHorizontalAlignment: shapeState.textHorizontalAlignment,
+        textVerticalAlignment: shapeState.textVerticalAlignment,
+        fontSize: shapeState.fontSize,
+        bold: shapeState.bold,
+        italic: shapeState.italic,
+        lockAspectRatio: shapeState.lockAspectRatio,
+      });
+      setStatusType("success");
+      setStatus(`Shape value bound to named range "${target}".`);
+    } catch (error) {
+      setStatusType("error");
+      const message = error instanceof Error ? error.message : String(error);
+      setStatus(`Named range binding failed: ${message}`);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const applyShapeAnchorFormula = async () => {
+    if (!activeShape || !shapeState.formula.trim()) {
+      return;
+    }
+    await runAction("Apply anchor cell formula", async () => {
+      await applyFormulaToShapeAnchorCell(
+        activeShape.sheet,
+        activeShape.anchorAddress,
+        shapeState.formula,
+        activeShape.name
+      );
+    });
+  };
+
+  const applyThemeColorToShapeField = (
+    field: "fillColor" | "outlineColor" | "fontColor",
+    color: string
+  ) => {
+    setShapeState((prev) => ({ ...prev, [field]: color }));
+  };
+
+  const applyShapeNoFill = () => {
+    setShapeState((prev) => ({ ...prev, fillColor: NO_FILL_COLOR_TOKEN }));
+  };
+
+  const submitShapeRename = async () => {
+    if (!activeShape) {
+      return;
+    }
+    const nextName = shapeState.shapeName.trim();
+    if (!nextName || nextName === activeShape.name) {
+      return;
+    }
+    await runAction("Rename shape", async () => {
+      await renameShape(activeShape.sheet, activeShape.name, nextName);
+    });
+    setActiveShape((prev) => (prev ? { ...prev, name: nextName } : prev));
+  };
+
+  const moveShapeToGridSelection = async () => {
+    if (!activeShape) {
+      return;
+    }
+    await runAction("Move shape to selected cell", async () => {
+      const moved = await moveShapeToSelection(
+        activeShape.sheet,
+        activeShape.name,
+        activeShape.anchorAddress
+      );
+      setActiveShape((prev) => (prev ? { ...prev, anchorAddress: moved.anchorAddress } : prev));
+    });
+  };
+
+  const renderFormatShapes = () => (
+    <>
+      <div className={styles.sectionCard}>
+        <Text className={styles.sectionTitle}>Shapes/Text Boxes</Text>
+        <div className={styles.shapeToolbar}>
+          <button
+            type="button"
+            className={styles.plusBtn}
+            title="Add shape or text box"
+            onClick={() => setShapeAddOpen(true)}
+          >
+            +
+          </button>
+          <Text className={styles.shapeHint}>
+            Add a shape/text box on the active cell and manage formatting/binding below.
+          </Text>
+        </div>
+        {activeShape ? (
+          <>
+            <details className={styles.collapsibleSection} open>
+              <summary className={styles.collapsibleSummary}>General</summary>
+              <div className={styles.collapsibleBody}>
+                <div className={styles.modalInlineRow}>
+                  <div className={styles.modalRow}>
+                    <Text className={styles.modalLabel}>Active Shape</Text>
+                    <Input
+                      value={shapeState.shapeName || activeShape.name}
+                      onChange={(_, data) =>
+                        setShapeState((prev) => ({ ...prev, shapeName: data.value }))
+                      }
+                    />
+                  </div>
+                  <div className={styles.modalRow}>
+                    <Text className={styles.modalLabel}>Anchor Cell</Text>
+                    <Input value={`${activeShape.sheet}!${activeShape.anchorAddress}`} readOnly />
+                  </div>
+                </div>
+                <div className={styles.topActions}>
+                  <Button className={styles.miniBtn} onClick={() => void submitShapeRename()}>
+                    Rename Shape
+                  </Button>
+                  <Button className={styles.miniBtn} onClick={() => void moveShapeToGridSelection()}>
+                    Move to Grid Selection
+                  </Button>
+                </div>
+              </div>
+            </details>
+            <details className={styles.collapsibleSection} open>
+              <summary className={styles.collapsibleSummary}>Appearance</summary>
+              <div className={styles.collapsibleBody}>
+            <div className={styles.modalInlineRow}>
+              <div className={styles.modalRow}>
+                <Text className={styles.modalLabel}>Fill</Text>
+                <div className={styles.swatchRow}>
+                  <Button
+                    className={`${styles.noFillBtn} ${
+                      shapeState.fillColor === NO_FILL_COLOR_TOKEN ? styles.noFillBtnSelected : ""
+                    }`}
+                    onClick={applyShapeNoFill}
+                  >
+                    No Fill
+                  </Button>
+                  {themeColorSwatches.map((swatch) => (
+                    <Button
+                      key={`fill-${swatch}`}
+                      className={`${styles.swatchBtn} ${
+                        shapeState.fillColor === swatch ? styles.swatchBtnSelected : ""
+                      }`}
+                      style={{ backgroundColor: swatch }}
+                      title={`Theme color ${swatch}`}
+                      onClick={() => applyThemeColorToShapeField("fillColor", swatch)}
+                    />
+                  ))}
+                </div>
+                <input
+                  className={styles.swatchInput}
+                  type="color"
+                  value={shapeColorInputValue(shapeState.fillColor, "#ffffff")}
+                  onChange={(event) =>
+                    setShapeState((prev) => ({ ...prev, fillColor: event.target.value }))
+                  }
+                />
+              </div>
+              <div className={styles.modalRow}>
+                <Text className={styles.modalLabel}>Outline</Text>
+                <div className={styles.swatchRow}>
+                  {themeColorSwatches.map((swatch) => (
+                    <Button
+                      key={`outline-${swatch}`}
+                      className={`${styles.swatchBtn} ${
+                        shapeState.outlineColor === swatch ? styles.swatchBtnSelected : ""
+                      }`}
+                      style={{ backgroundColor: swatch }}
+                      title={`Theme color ${swatch}`}
+                      onClick={() => applyThemeColorToShapeField("outlineColor", swatch)}
+                    />
+                  ))}
+                </div>
+                <input
+                  className={styles.swatchInput}
+                  type="color"
+                  value={shapeColorInputValue(shapeState.outlineColor, "#000000")}
+                  onChange={(event) =>
+                    setShapeState((prev) => ({ ...prev, outlineColor: event.target.value }))
+                  }
+                />
+              </div>
+            </div>
+            <div className={styles.modalInlineRow}>
+              <div className={styles.modalRow}>
+                <Text className={styles.modalLabel}>Font Color</Text>
+                <div className={styles.swatchRow}>
+                  {themeColorSwatches.map((swatch) => (
+                    <Button
+                      key={`font-${swatch}`}
+                      className={`${styles.swatchBtn} ${
+                        shapeState.fontColor === swatch ? styles.swatchBtnSelected : ""
+                      }`}
+                      style={{ backgroundColor: swatch }}
+                      title={`Theme color ${swatch}`}
+                      onClick={() => applyThemeColorToShapeField("fontColor", swatch)}
+                    />
+                  ))}
+                </div>
+                <input
+                  className={styles.swatchInput}
+                  type="color"
+                  value={shapeColorInputValue(shapeState.fontColor, "#1f1f1f")}
+                  onChange={(event) =>
+                    setShapeState((prev) => ({ ...prev, fontColor: event.target.value }))
+                  }
+                />
+              </div>
+              <div className={styles.modalRow}>
+                <Text className={styles.modalLabel}>Shape Text</Text>
+                <Input
+                  value={shapeState.text}
+                  onChange={(_, data) => setShapeState((prev) => ({ ...prev, text: data.value }))}
+                />
+              </div>
+            </div>
+            <div className={styles.modalInlineRow}>
+              <div className={styles.modalRow}>
+                <Text className={styles.modalLabel}>Width</Text>
+                <input
+                  className={styles.numberInput}
+                  type="number"
+                  min={20}
+                  value={shapeState.width}
+                  onChange={(event) =>
+                    setShapeState((prev) => ({
+                      ...prev,
+                      width: Number(event.target.value) || prev.width,
+                    }))
+                  }
+                />
+              </div>
+              <div className={styles.modalRow}>
+                <Text className={styles.modalLabel}>Height</Text>
+                <input
+                  className={styles.numberInput}
+                  type="number"
+                  min={20}
+                  value={shapeState.height}
+                  onChange={(event) =>
+                    setShapeState((prev) => ({
+                      ...prev,
+                      height: Number(event.target.value) || prev.height,
+                    }))
+                  }
+                />
+              </div>
+            </div>
+            <div className={styles.modalInlineRow}>
+              <div className={styles.modalRow}>
+                <Text className={styles.modalLabel}>Rotation</Text>
+                <input
+                  className={styles.numberInput}
+                  type="number"
+                  min={-360}
+                  max={360}
+                  value={shapeState.rotation}
+                  onChange={(event) =>
+                    setShapeState((prev) => ({
+                      ...prev,
+                      rotation: Number(event.target.value) || 0,
+                    }))
+                  }
+                />
+              </div>
+              <div className={styles.modalRow}>
+                <Text className={styles.modalLabel}>Outline Weight</Text>
+                <input
+                  className={styles.numberInput}
+                  type="number"
+                  min={0.25}
+                  step={0.25}
+                  value={shapeState.lineWeight}
+                  onChange={(event) =>
+                    setShapeState((prev) => ({
+                      ...prev,
+                      lineWeight: Number(event.target.value) || prev.lineWeight,
+                    }))
+                  }
+                />
+              </div>
+            </div>
+            <div className={styles.modalInlineRow}>
+              <div className={styles.modalRow}>
+                <Text className={styles.modalLabel}>Fill Transparency (%)</Text>
+                <input
+                  className={styles.numberInput}
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={shapeState.fillTransparency}
+                  onChange={(event) =>
+                    setShapeState((prev) => ({
+                      ...prev,
+                      fillTransparency: Number(event.target.value) || 0,
+                    }))
+                  }
+                />
+              </div>
+              <div className={styles.modalRow}>
+                <Text className={styles.modalLabel}>Font Size</Text>
+                <input
+                  className={styles.numberInput}
+                  type="number"
+                  min={6}
+                  max={72}
+                  value={shapeState.fontSize}
+                  onChange={(event) =>
+                    setShapeState((prev) => ({
+                      ...prev,
+                      fontSize: Number(event.target.value) || prev.fontSize,
+                    }))
+                  }
+                />
+              </div>
+            </div>
+            <div className={styles.modalInlineRow}>
+              <div className={styles.modalRow}>
+                <Text className={styles.modalLabel}>Text Horizontal Alignment</Text>
+                <Select
+                  className={styles.smallSelect}
+                  value={shapeState.textHorizontalAlignment}
+                  onChange={(_, data) =>
+                    setShapeState((prev) => ({
+                      ...prev,
+                      textHorizontalAlignment: data.value as ShapeEditorState["textHorizontalAlignment"],
+                    }))
+                  }
+                >
+                  <option value="Left">Left</option>
+                  <option value="Center">Center</option>
+                  <option value="Right">Right</option>
+                </Select>
+              </div>
+              <div className={styles.modalRow}>
+                <Text className={styles.modalLabel}>Text Vertical Alignment</Text>
+                <Select
+                  className={styles.smallSelect}
+                  value={shapeState.textVerticalAlignment}
+                  onChange={(_, data) =>
+                    setShapeState((prev) => ({
+                      ...prev,
+                      textVerticalAlignment: data.value as ShapeEditorState["textVerticalAlignment"],
+                    }))
+                  }
+                >
+                  <option value="Top">Top</option>
+                  <option value="Middle">Middle</option>
+                  <option value="Bottom">Bottom</option>
+                </Select>
+              </div>
+            </div>
+            <div className={styles.modalInlineRow}>
+              <label className={styles.checkboxRow}>
+                <input
+                  type="checkbox"
+                  checked={shapeState.bold}
+                  onChange={(event) =>
+                    setShapeState((prev) => ({ ...prev, bold: event.target.checked }))
+                  }
+                />
+                Bold
+              </label>
+              <label className={styles.checkboxRow}>
+                <input
+                  type="checkbox"
+                  checked={shapeState.italic}
+                  onChange={(event) =>
+                    setShapeState((prev) => ({ ...prev, italic: event.target.checked }))
+                  }
+                />
+                Italic
+              </label>
+              <label className={styles.checkboxRow}>
+                <input
+                  type="checkbox"
+                  checked={shapeState.lockAspectRatio}
+                  onChange={(event) =>
+                    setShapeState((prev) => ({ ...prev, lockAspectRatio: event.target.checked }))
+                  }
+                />
+                Lock Aspect Ratio
+              </label>
+            </div>
+              </div>
+            </details>
+            <details className={styles.collapsibleSection}>
+              <summary className={styles.collapsibleSummary}>Binding</summary>
+              <div className={styles.collapsibleBody}>
+            <div className={styles.modalRow}>
+              <Text className={styles.modalLabel}>Shape Value (Named Range Intellisense)</Text>
+              <Input
+                value={shapeState.valueBinding}
+                onChange={(_, data) => {
+                  setShapeSuggestionIndex(0);
+                  setShapeState((prev) => ({ ...prev, valueBinding: data.value }));
+                }}
+              />
+              {shapeValueSuggestions.length > 0 ? (
+                <div className={styles.suggestionsBox}>
+                  {shapeValueSuggestions.map((name, index) => (
+                    <button
+                      key={name}
+                      type="button"
+                      className={`${styles.suggestionBtn} ${shapeSuggestionIndex === index ? styles.suggestionBtnActive : ""}`}
+                      onMouseEnter={() => setShapeSuggestionIndex(index)}
+                      onClick={() => void applyNamedRangeToShapeText(name)}
+                    >
+                      nm {name}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+            <div className={styles.modalRow}>
+              <Text className={styles.modalLabel}>
+                Formula Editor (writes into anchor cell; font matches fill to appear hidden)
+              </Text>
+              <Input
+                value={shapeState.formula}
+                onChange={(_, data) => setShapeState((prev) => ({ ...prev, formula: data.value }))}
+                placeholder='=TEXT(TODAY(),"yyyy-mm-dd")'
+              />
+            </div>
+              </div>
+            </details>
+            <div className={styles.topActions}>
+              <Button className={styles.miniBtn} onClick={() => void applyShapeFormatting()}>
+                Update Shape Formatting
+              </Button>
+              <Button className={styles.miniBtn} onClick={() => void applyNamedRangeToShapeText()}>
+                Apply Named Range Value
+              </Button>
+              <Button className={styles.miniBtn} onClick={() => void applyShapeAnchorFormula()}>
+                Apply Formula to Anchor Cell
+              </Button>
+            </div>
+          </>
+        ) : (
+          <Text className={styles.placeholder}>
+            No active shape in this session. Use the + button to insert one on the selected cell.
+          </Text>
+        )}
+      </div>
+      {shapeAddOpen ? (
+        <div className={styles.modalBackdrop}>
+          <div className={styles.modal}>
+            <Text className={styles.modalTitle}>Insert Shape/Text Box</Text>
+            <div className={styles.modalRow}>
+              <Text className={styles.modalLabel}>Type</Text>
+              <Select
+                className={styles.smallSelect}
+                value={shapeState.shapeType}
+                onChange={(_, data) =>
+                  setShapeState((prev) => ({
+                    ...prev,
+                    shapeType: data.value as InsertableShapeType,
+                  }))
+                }
+              >
+                <option value="Rectangle">Rectangle</option>
+                <option value="RoundedRectangle">Rounded Rectangle</option>
+                <option value="Chevron">Chevron</option>
+                <option value="Hexagon">Hexagon</option>
+                <option value="Diamond">Diamond</option>
+                <option value="Oval">Oval</option>
+                <option value="TextBox">Text Box</option>
+              </Select>
+            </div>
+            <div className={styles.modalInlineRow}>
+              <div className={styles.modalRow}>
+                <Text className={styles.modalLabel}>Fill</Text>
+                <div className={styles.swatchRow}>
+                  <Button
+                    className={`${styles.noFillBtn} ${
+                      shapeState.fillColor === NO_FILL_COLOR_TOKEN ? styles.noFillBtnSelected : ""
+                    }`}
+                    onClick={applyShapeNoFill}
+                  >
+                    No Fill
+                  </Button>
+                  {themeColorSwatches.map((swatch) => (
+                    <Button
+                      key={`insert-fill-${swatch}`}
+                      className={`${styles.swatchBtn} ${
+                        shapeState.fillColor === swatch ? styles.swatchBtnSelected : ""
+                      }`}
+                      style={{ backgroundColor: swatch }}
+                      onClick={() => applyThemeColorToShapeField("fillColor", swatch)}
+                    />
+                  ))}
+                </div>
+                <input
+                  className={styles.swatchInput}
+                  type="color"
+                  value={shapeColorInputValue(shapeState.fillColor, "#ffffff")}
+                  onChange={(event) =>
+                    setShapeState((prev) => ({ ...prev, fillColor: event.target.value }))
+                  }
+                />
+              </div>
+              <div className={styles.modalRow}>
+                <Text className={styles.modalLabel}>Outline</Text>
+                <div className={styles.swatchRow}>
+                  {themeColorSwatches.map((swatch) => (
+                    <Button
+                      key={`insert-outline-${swatch}`}
+                      className={`${styles.swatchBtn} ${
+                        shapeState.outlineColor === swatch ? styles.swatchBtnSelected : ""
+                      }`}
+                      style={{ backgroundColor: swatch }}
+                      onClick={() => applyThemeColorToShapeField("outlineColor", swatch)}
+                    />
+                  ))}
+                </div>
+                <input
+                  className={styles.swatchInput}
+                  type="color"
+                  value={shapeColorInputValue(shapeState.outlineColor, "#000000")}
+                  onChange={(event) =>
+                    setShapeState((prev) => ({ ...prev, outlineColor: event.target.value }))
+                  }
+                />
+              </div>
+            </div>
+            <div className={styles.modalInlineRow}>
+              <div className={styles.modalRow}>
+                <Text className={styles.modalLabel}>Font Color</Text>
+                <div className={styles.swatchRow}>
+                  {themeColorSwatches.map((swatch) => (
+                    <Button
+                      key={`insert-font-${swatch}`}
+                      className={`${styles.swatchBtn} ${
+                        shapeState.fontColor === swatch ? styles.swatchBtnSelected : ""
+                      }`}
+                      style={{ backgroundColor: swatch }}
+                      onClick={() => applyThemeColorToShapeField("fontColor", swatch)}
+                    />
+                  ))}
+                </div>
+                <input
+                  className={styles.swatchInput}
+                  type="color"
+                  value={shapeColorInputValue(shapeState.fontColor, "#1f1f1f")}
+                  onChange={(event) =>
+                    setShapeState((prev) => ({ ...prev, fontColor: event.target.value }))
+                  }
+                />
+              </div>
+              <div className={styles.modalRow}>
+                <Text className={styles.modalLabel}>Text</Text>
+                <Input
+                  value={shapeState.text}
+                  onChange={(_, data) => setShapeState((prev) => ({ ...prev, text: data.value }))}
+                />
+              </div>
+            </div>
+            <div className={styles.modalActions}>
+              <Button className={styles.miniBtn} onClick={() => setShapeAddOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                className={styles.miniBtn}
+                disabled={isSubmitting}
+                onClick={() => void insertShapeFromSelection()}
+              >
+                Insert on Active Cell
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </>
   );
 
   const renderFunctionsEditor = () => (
@@ -3553,6 +4433,8 @@ const App: React.FC = () => {
               ? renderTablesTable()
             : primaryTab === "Format" && secondaryTabId === "styles"
               ? renderFormatStyles()
+            : primaryTab === "Format" && secondaryTabId === "shapes"
+              ? renderFormatShapes()
             : renderPlaceholder()}
           {status ? (
             <div className={styles.status}>

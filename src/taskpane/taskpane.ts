@@ -2,6 +2,7 @@
 
 export interface NamedRangeRecord {
   id: string;
+  kind: "NamedRange" | "Shape";
   name: string;
   address: string;
   sheet: string;
@@ -13,7 +14,8 @@ export interface NamedRangeRecord {
     | "Single Column Array"
     | "Single Row Array"
     | "Multi-column Array"
-    | "Multi-Row Array";
+    | "Multi-Row Array"
+    | "Shape";
 }
 
 export interface TableRecord {
@@ -30,6 +32,51 @@ export interface FormulaEvaluationResult {
 }
 
 export type CellStylePreset = "Input Cell" | "Parameter Cell" | "Header" | "Subheader";
+export type InsertableShapeType =
+  | "Rectangle"
+  | "RoundedRectangle"
+  | "Chevron"
+  | "Hexagon"
+  | "Diamond"
+  | "Oval"
+  | "TextBox";
+
+export interface ShapeInsertOptions {
+  shapeType: InsertableShapeType;
+  fillColor: string;
+  outlineColor: string;
+  fontColor: string;
+  text: string;
+}
+
+export interface InsertedShapeRecord {
+  name: string;
+  shapeType: InsertableShapeType;
+  sheet: string;
+  anchorAddress: string;
+  width: number;
+  height: number;
+}
+
+export interface ShapeFormatOptions {
+  fillColor: string;
+  outlineColor: string;
+  fontColor: string;
+  text: string;
+  lineWeight: number;
+  fillTransparency: number;
+  width: number;
+  height: number;
+  rotation: number;
+  textHorizontalAlignment: "Left" | "Center" | "Right";
+  textVerticalAlignment: "Top" | "Middle" | "Bottom";
+  fontSize: number;
+  bold: boolean;
+  italic: boolean;
+  lockAspectRatio: boolean;
+}
+
+const NO_FILL_COLOR_TOKEN = "__NO_FILL__";
 
 async function runFormattingCommand(command: (context: Excel.RequestContext) => Promise<void>) {
   await Excel.run(async (context) => {
@@ -110,6 +157,35 @@ function getSheetAndAddress(
     sheet: parsed.sheet || fallbackSheet,
     address: parsed.address,
   };
+}
+
+function normalizeMaybeAddress(input: string): string {
+  const trimmed = input.replace(/^=/, "").trim();
+  if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    return trimmed.slice(1, -1).replace(/""/g, '"').trim();
+  }
+  return trimmed;
+}
+
+function parseAddressLikeText(
+  text: string,
+  fallbackSheet: string
+): { sheet: string; address: string } | null {
+  const normalized = normalizeMaybeAddress(text);
+  const isAddressOnly =
+    /^[A-Za-z]{1,3}\d+(?::[A-Za-z]{1,3}\d+)?$/i.test(normalized) ||
+    /^[A-Za-z]{1,3}:[A-Za-z]{1,3}$/i.test(normalized) ||
+    /^\d+:\d+$/.test(normalized);
+  const isQualified = normalized.includes("!");
+  if (!isAddressOnly && !isQualified) {
+    return null;
+  }
+  try {
+    const parsed = getSheetAndAddress(normalized, fallbackSheet);
+    return parsed.sheet && parsed.address ? parsed : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function insertText(text: string) {
@@ -283,6 +359,7 @@ export async function getNamedRanges(): Promise<NamedRangeRecord[]> {
       const resolvedSheet = parsed.sheet || "N/A";
       records.push({
         id: `workbook::${namedItem.name}`,
+        kind: "NamedRange",
         name: namedItem.name,
         address:
           parsed.sheet && parsed.address
@@ -302,14 +379,16 @@ export async function getNamedRanges(): Promise<NamedRangeRecord[]> {
       }
     }
 
-    const sheetNameMaps = worksheets.items.map((sheet) => {
+    const worksheetArtifacts = worksheets.items.map((sheet) => {
       const collection = sheet.names;
+      const shapes = sheet.shapes;
       collection.load("items/name,items/type,items/formula");
-      return { sheetName: sheet.name, collection };
+      shapes.load("items/name");
+      return { sheetName: sheet.name, collection, shapes };
     });
     await context.sync();
 
-    for (const map of sheetNameMaps) {
+    for (const map of worksheetArtifacts) {
       for (const namedItem of map.collection.items) {
         if (namedItem.name.toLowerCase().startsWith("_xl")) {
           continue;
@@ -325,6 +404,7 @@ export async function getNamedRanges(): Promise<NamedRangeRecord[]> {
         const resolvedSheet = parsed.sheet || map.sheetName;
         records.push({
           id: `worksheet::${map.sheetName}::${namedItem.name}`,
+          kind: "NamedRange",
           name: namedItem.name,
           address:
             resolvedSheet && parsed.address
@@ -344,6 +424,20 @@ export async function getNamedRanges(): Promise<NamedRangeRecord[]> {
           range.load("rowCount,columnCount");
           pendingShapeLoads.push({ recordIndex: records.length - 1, range });
         }
+      }
+
+      for (const shape of map.shapes.items) {
+        records.push({
+          id: `shape::${map.sheetName}::${shape.name}`,
+          kind: "Shape",
+          name: shape.name,
+          address: toQualifiedAddress(map.sheetName, "[Shape]"),
+          sheet: map.sheetName,
+          scope: map.sheetName,
+          scopeType: "Worksheet",
+          isRange: false,
+          type: "Shape",
+        });
       }
     }
 
@@ -568,5 +662,199 @@ export async function evaluateFormula(formulaText: string): Promise<FormulaEvalu
     output.clear(Excel.ClearApplyTo.contents);
     await context.sync();
     return result;
+  });
+}
+
+export async function addShapeOnActiveCell(
+  options: ShapeInsertOptions
+): Promise<InsertedShapeRecord> {
+  return Excel.run(async (context) => {
+    const sheet = context.workbook.worksheets.getActiveWorksheet();
+    sheet.load("name");
+    const selection = context.workbook.getSelectedRange();
+    selection.load("address,left,top,width,height");
+    await context.sync();
+    const selectionParsed = splitQualifiedAddress(selection.address);
+    const anchorAddress = selectionParsed.address || selection.address;
+
+    const shapeName = `WBM_${options.shapeType}_${Date.now().toString()}`;
+    let shape: Excel.Shape;
+
+    if (options.shapeType === "TextBox") {
+      shape = sheet.shapes.addTextBox(options.text || "");
+    } else {
+      const geometricMap: Record<
+        Exclude<InsertableShapeType, "TextBox">,
+        Excel.GeometricShapeType
+      > = {
+        Rectangle: Excel.GeometricShapeType.rectangle,
+        RoundedRectangle: "Round2SameRectangle" as unknown as Excel.GeometricShapeType,
+        Chevron: "Chevron" as unknown as Excel.GeometricShapeType,
+        Hexagon: "Hexagon" as unknown as Excel.GeometricShapeType,
+        Diamond: "Diamond" as unknown as Excel.GeometricShapeType,
+        Oval: "Oval" as unknown as Excel.GeometricShapeType,
+      };
+      const geometricType = geometricMap[options.shapeType] ?? Excel.GeometricShapeType.rectangle;
+      shape = sheet.shapes.addGeometricShape(geometricType);
+      shape.textFrame.textRange.text = options.text || "";
+    }
+
+    shape.name = shapeName;
+    shape.left = selection.left;
+    shape.top = selection.top;
+    shape.width = Math.max(selection.width, 110);
+    shape.height = Math.max(selection.height, 34);
+    if (options.fillColor === NO_FILL_COLOR_TOKEN) {
+      shape.fill.clear();
+    } else {
+      shape.fill.setSolidColor(options.fillColor);
+    }
+    shape.lineFormat.color = options.outlineColor;
+    shape.lineFormat.weight = 1;
+    shape.textFrame.textRange.font.color = options.fontColor;
+    shape.placement = Excel.Placement.oneCell;
+
+    await context.sync();
+
+    return {
+      name: shapeName,
+      shapeType: options.shapeType,
+      sheet: sheet.name,
+      anchorAddress,
+      width: shape.width,
+      height: shape.height,
+    };
+  });
+}
+
+export async function updateShapeFormatting(
+  sheetName: string,
+  shapeName: string,
+  options: ShapeFormatOptions
+) {
+  await Excel.run(async (context) => {
+    const shape = context.workbook.worksheets.getItem(sheetName).shapes.getItem(shapeName);
+    if (options.fillColor === NO_FILL_COLOR_TOKEN) {
+      shape.fill.clear();
+    } else {
+      shape.fill.setSolidColor(options.fillColor);
+    }
+    shape.fill.transparency = Math.min(Math.max(options.fillTransparency, 0), 100);
+    shape.lineFormat.color = options.outlineColor;
+    shape.lineFormat.weight = Math.max(options.lineWeight, 0.25);
+    shape.width = Math.max(options.width, 20);
+    shape.height = Math.max(options.height, 20);
+    shape.rotation = options.rotation;
+    shape.textFrame.horizontalAlignment =
+      options.textHorizontalAlignment as Excel.ShapeTextHorizontalAlignment;
+    shape.textFrame.verticalAlignment =
+      options.textVerticalAlignment as Excel.ShapeTextVerticalAlignment;
+    shape.textFrame.textRange.font.color = options.fontColor;
+    shape.textFrame.textRange.font.size = Math.max(options.fontSize, 6);
+    shape.textFrame.textRange.font.bold = options.bold;
+    shape.textFrame.textRange.font.italic = options.italic;
+    shape.textFrame.textRange.text = options.text;
+    shape.lockAspectRatio = options.lockAspectRatio;
+    await context.sync();
+  });
+}
+
+export async function renameShape(sheetName: string, oldName: string, newName: string) {
+  await Excel.run(async (context) => {
+    const shape = context.workbook.worksheets.getItem(sheetName).shapes.getItem(oldName);
+    shape.name = newName;
+    await context.sync();
+  });
+}
+
+export async function moveShapeToSelection(
+  sheetName: string,
+  shapeName: string,
+  oldAnchorAddress: string
+): Promise<{ anchorAddress: string }> {
+  return Excel.run(async (context) => {
+    const sheet = context.workbook.worksheets.getItem(sheetName);
+    const shape = sheet.shapes.getItem(shapeName);
+    const selected = context.workbook.getSelectedRange();
+    const selectedCell = selected.getCell(0, 0);
+    const oldParsed = splitQualifiedAddress(oldAnchorAddress);
+    const oldAnchor = sheet.getRange(oldParsed.address || oldAnchorAddress).getCell(0, 0);
+
+    selected.load("left,top");
+    selectedCell.load("address");
+    oldAnchor.load("address");
+    await context.sync();
+
+    shape.left = selected.left;
+    shape.top = selected.top;
+
+    const targetParsed = splitQualifiedAddress(selectedCell.address);
+    const targetAddress = targetParsed.address || selectedCell.address;
+    if (oldAnchor.address !== selectedCell.address) {
+      selectedCell.copyFrom(oldAnchor, Excel.RangeCopyType.all);
+      oldAnchor.clear(Excel.ClearApplyTo.contents);
+    }
+
+    await context.sync();
+    return { anchorAddress: targetAddress };
+  });
+}
+
+export async function getNamedRangeValueText(rangeName: string): Promise<string> {
+  return Excel.run(async (context) => {
+    const evalSheet = context.workbook.worksheets.getActiveWorksheet();
+    const probe = evalSheet.getRange("XFD1048576");
+    evalSheet.load("name");
+    probe.formulas = [[`=${rangeName}`]];
+    probe.load("values");
+    await context.sync();
+    const value = probe.values[0]?.[0];
+    probe.clear(Excel.ClearApplyTo.contents);
+    await context.sync();
+    if (typeof value === "string" && value.startsWith("#")) {
+      throw new Error(`Named range "${rangeName}" was not found or returned an error.`);
+    }
+    const asText = value === null || value === undefined ? "" : String(value);
+    const maybeRef = parseAddressLikeText(asText, evalSheet.name);
+    if (!maybeRef) {
+      return asText;
+    }
+    const derefRange = context.workbook.worksheets
+      .getItem(maybeRef.sheet)
+      .getRange(maybeRef.address);
+    derefRange.load("values");
+    await context.sync();
+    const derefValue = derefRange.values[0]?.[0];
+    return derefValue === null || derefValue === undefined ? "" : String(derefValue);
+  });
+}
+
+export async function applyFormulaToShapeAnchorCell(
+  sheetName: string,
+  anchorAddress: string,
+  formulaText: string,
+  shapeName: string
+) {
+  await Excel.run(async (context) => {
+    const sheet = context.workbook.worksheets.getItem(sheetName);
+    const range = sheet.getRange(anchorAddress);
+    range.load("format/fill/color,values");
+    await context.sync();
+
+    const formula = formulaText.trim();
+    range.formulas = [[formula.startsWith("=") ? formula : `=${formula}`]];
+    await context.sync();
+
+    range.load("format/fill/color,values");
+    await context.sync();
+    const fillColor = range.format.fill.color || "#ffffff";
+    range.format.font.color = fillColor;
+
+    const computed = range.values[0]?.[0];
+    const shape = sheet.shapes.getItem(shapeName);
+    shape.textFrame.textRange.text =
+      computed === null || computed === undefined ? "" : String(computed);
+
+    await context.sync();
   });
 }
