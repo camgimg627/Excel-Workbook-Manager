@@ -92,6 +92,66 @@
                     <FunctionName>openAndPullFormulaEditorCommand</FunctionName>
                   </Action>
                 </Control>
+                <Control xsi:type="Button" id="PullFormulaButton">
+                  <Label resid="PullFormulaButton.Label"/>
+                  <Supertip>
+                    <Title resid="PullFormulaButton.Label"/>
+                    <Description resid="PullFormulaButton.Tooltip"/>
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="Icon.16x16"/>
+                    <bt:Image size="32" resid="Icon.32x32"/>
+                    <bt:Image size="80" resid="Icon.80x80"/>
+                  </Icon>
+                  <Action xsi:type="ExecuteFunction">
+                    <FunctionName>pullFormulaCommand</FunctionName>
+                  </Action>
+                </Control>
+                <Control xsi:type="Button" id="ApplyFormulaButton">
+                  <Label resid="ApplyFormulaButton.Label"/>
+                  <Supertip>
+                    <Title resid="ApplyFormulaButton.Label"/>
+                    <Description resid="ApplyFormulaButton.Tooltip"/>
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="Icon.16x16"/>
+                    <bt:Image size="32" resid="Icon.32x32"/>
+                    <bt:Image size="80" resid="Icon.80x80"/>
+                  </Icon>
+                  <Action xsi:type="ExecuteFunction">
+                    <FunctionName>applyFormulaCommand</FunctionName>
+                  </Action>
+                </Control>
+                <Control xsi:type="Button" id="BeautifyFormulaButton">
+                  <Label resid="BeautifyFormulaButton.Label"/>
+                  <Supertip>
+                    <Title resid="BeautifyFormulaButton.Label"/>
+                    <Description resid="BeautifyFormulaButton.Tooltip"/>
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="Icon.16x16"/>
+                    <bt:Image size="32" resid="Icon.32x32"/>
+                    <bt:Image size="80" resid="Icon.80x80"/>
+                  </Icon>
+                  <Action xsi:type="ExecuteFunction">
+                    <FunctionName>beautifyFormulaCommand</FunctionName>
+                  </Action>
+                </Control>
+                <Control xsi:type="Button" id="InsertSelectionButton">
+                  <Label resid="InsertSelectionButton.Label"/>
+                  <Supertip>
+                    <Title resid="InsertSelectionButton.Label"/>
+                    <Description resid="InsertSelectionButton.Tooltip"/>
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="Icon.16x16"/>
+                    <bt:Image size="32" resid="Icon.32x32"/>
+                    <bt:Image size="80" resid="Icon.80x80"/>
+                  </Icon>
+                  <Action xsi:type="ExecuteFunction">
+                    <FunctionName>insertSelectionFormulaCommand</FunctionName>
+                  </Action>
+                </Control>
               </Group>
             </OfficeTab>
           </ExtensionPoint>
@@ -99,6 +159,16 @@
             <Shortcut resid="OpenAndPullFormulaEditor.Shortcut">
               <Action xsi:type="ExecuteFunction">
                 <FunctionName>openAndPullFormulaEditorCommand</FunctionName>
+              </Action>
+            </Shortcut>
+            <Shortcut resid="PullFormula.Shortcut">
+              <Action xsi:type="ExecuteFunction">
+                <FunctionName>pullFormulaCommand</FunctionName>
+              </Action>
+            </Shortcut>
+            <Shortcut resid="ApplyFormula.Shortcut">
+              <Action xsi:type="ExecuteFunction">
+                <FunctionName>applyFormulaCommand</FunctionName>
               </Action>
             </Shortcut>
           </ExtensionPoint>
@@ -123,12 +193,22 @@
         <bt:String id="OpenFormulaEditorButton.Label" DefaultValue="Open Formula Editor"/>
         <bt:String id="OpenAndPullFormulaEditorButton.Label" DefaultValue="Edit Active Formula"/>
         <bt:String id="OpenAndPullFormulaEditor.Shortcut" DefaultValue="Ctrl+Shift+Alt+E"/>
+        <bt:String id="PullFormulaButton.Label" DefaultValue="Pull Formula"/>
+        <bt:String id="ApplyFormulaButton.Label" DefaultValue="Apply Formula"/>
+        <bt:String id="BeautifyFormulaButton.Label" DefaultValue="Beautify"/>
+        <bt:String id="InsertSelectionButton.Label" DefaultValue="Insert Selection"/>
+        <bt:String id="PullFormula.Shortcut" DefaultValue="Ctrl+Shift+Alt+P"/>
+        <bt:String id="ApplyFormula.Shortcut" DefaultValue="Ctrl+Shift+Alt+A"/>
       </bt:ShortStrings>
       <bt:LongStrings>
         <bt:String id="GetStarted.Description" DefaultValue="Your sample add-in loaded successfully. Go to the HOME tab and click the 'Show Task Pane' button to get started."/>
         <bt:String id="TaskpaneButton.Tooltip" DefaultValue="Click to Show a Taskpane"/>
-        <bt:String id="OpenFormulaEditorButton.Tooltip" DefaultValue="Open Workbook Manager directly in Formula Editor and pull the active-cell formula."/>
+        <bt:String id="OpenFormulaEditorButton.Tooltip" DefaultValue="Open Workbook Manager directly in Formula Editor."/>
         <bt:String id="OpenAndPullFormulaEditorButton.Tooltip" DefaultValue="Open Workbook Manager Formula Editor and pull the active cell formula immediately."/>
+        <bt:String id="PullFormulaButton.Tooltip" DefaultValue="Pull the active cell formula into the Workbook Manager Formula Editor."/>
+        <bt:String id="ApplyFormulaButton.Tooltip" DefaultValue="Apply the current Workbook Manager Formula Editor text back to the active cell."/>
+        <bt:String id="BeautifyFormulaButton.Tooltip" DefaultValue="Beautify the formula currently in Workbook Manager Formula Editor."/>
+        <bt:String id="InsertSelectionButton.Tooltip" DefaultValue="Insert the current Excel selection (or matching named range) into the Workbook Manager Formula Editor."/>
       </bt:LongStrings>
     </Resources>
   </VersionOverrides>

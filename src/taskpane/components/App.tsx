@@ -282,6 +282,10 @@ const WORKBOOK_THEME_SWATCHES = [
 const NO_FILL_COLOR_TOKEN = "__NO_FILL__";
 const OPEN_FORMULA_EDITOR_SIGNAL_KEY = "wbm.openFormulaEditor.request";
 const OPEN_FORMULA_EDITOR_AND_PULL_SIGNAL = "open-and-pull";
+const FORMULA_PULL_SIGNAL = "formula-pull";
+const FORMULA_APPLY_SIGNAL = "formula-apply";
+const FORMULA_BEAUTIFY_SIGNAL = "formula-beautify";
+const FORMULA_INSERT_SELECTION_SIGNAL = "formula-insert-selection";
 
 const SHAPE_THEMES: ShapeTheme[] = [
   {
@@ -2403,19 +2407,21 @@ const App: React.FC = () => {
 
         setPrimaryTab("Names");
         setSecondaryTabId("functions");
-        if (signal === OPEN_FORMULA_EDITOR_AND_PULL_SIGNAL) {
-          await runAction("Open active cell formula in editor", async () => {
-            const activeCell = await getActiveCellFormulaState();
-            setActiveFormulaPrompt(activeCell);
-            if (!activeCell.hasFormula) {
-              throw new Error(
-                `Cell ${activeCell.sheet}!${activeCell.address} does not contain a formula.`
-              );
-            }
-            setFormulaText(activeCell.formula);
-            setFormulaMode("Formula");
-            setTestFormulaCall(activeCell.formula);
-          });
+        if (signal === OPEN_FORMULA_EDITOR_AND_PULL_SIGNAL || signal === FORMULA_PULL_SIGNAL) {
+          await pullActiveCellFormula();
+          return;
+        }
+        if (signal === FORMULA_APPLY_SIGNAL) {
+          await pushFormulaToActiveCell();
+          return;
+        }
+        if (signal === FORMULA_BEAUTIFY_SIGNAL) {
+          await executeFormulaEditorCommand("beautifyFormula");
+          return;
+        }
+        if (signal === FORMULA_INSERT_SELECTION_SIGNAL) {
+          await addSelectionToFormula();
+          return;
         }
       } catch {
         // Ignore signal read errors to keep editor responsive.
