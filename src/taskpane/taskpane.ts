@@ -83,11 +83,20 @@ export interface ShapeFormatOptions {
   lockAspectRatio: boolean;
 }
 
+export interface ShapePositionOptions {
+  left?: number;
+  top?: number;
+}
+
 export interface ShapeEditorRecord {
   name: string;
   sheet: string;
   shapeType: InsertableShapeType;
+  geometricShapeType: string;
   anchorAddress: string;
+  left: number;
+  top: number;
+  zOrderPosition: number;
   fillColor: string;
   outlineColor: string;
   fontColor: string;
@@ -868,7 +877,7 @@ export async function getShapeEditorRecord(
     const sheet = context.workbook.worksheets.getItem(sheetName);
     const shape = sheet.shapes.getItem(shapeName);
     shape.load(
-      "name,width,height,rotation,lockAspectRatio,geometricShapeType,altTextDescription,fill/foregroundColor,fill/transparency,lineFormat/color,lineFormat/weight,textFrame/horizontalAlignment,textFrame/verticalAlignment,textFrame/textRange/text,textFrame/textRange/font/color,textFrame/textRange/font/size,textFrame/textRange/font/bold,textFrame/textRange/font/italic"
+      "name,left,top,zOrderPosition,width,height,rotation,lockAspectRatio,geometricShapeType,altTextDescription,fill/foregroundColor,fill/transparency,lineFormat/color,lineFormat/weight,textFrame/horizontalAlignment,textFrame/verticalAlignment,textFrame/textRange/text,textFrame/textRange/font/color,textFrame/textRange/font/size,textFrame/textRange/font/bold,textFrame/textRange/font/italic"
     );
     await context.sync();
 
@@ -879,7 +888,11 @@ export async function getShapeEditorRecord(
       name: shape.name,
       sheet: sheetName,
       shapeType: inferInsertableShapeType(shape.geometricShapeType),
+      geometricShapeType: String(shape.geometricShapeType || ""),
       anchorAddress,
+      left: shape.left || 0,
+      top: shape.top || 0,
+      zOrderPosition: shape.zOrderPosition || 0,
       fillColor,
       outlineColor: shape.lineFormat.color || "#000000",
       fontColor: shape.textFrame.textRange.font.color || "#1f1f1f",
@@ -900,6 +913,112 @@ export async function getShapeEditorRecord(
       italic: Boolean(shape.textFrame.textRange.font.italic),
       lockAspectRatio: Boolean(shape.lockAspectRatio),
     };
+  });
+}
+
+export async function updateShapePosition(
+  sheetName: string,
+  shapeName: string,
+  options: ShapePositionOptions
+) {
+  await Excel.run(async (context) => {
+    const shape = context.workbook.worksheets.getItem(sheetName).shapes.getItem(shapeName);
+    if (typeof options.left === "number") {
+      shape.left = options.left;
+    }
+    if (typeof options.top === "number") {
+      shape.top = options.top;
+    }
+    await context.sync();
+  });
+}
+
+export async function nudgeShape(sheetName: string, shapeName: string, dx: number, dy: number) {
+  await Excel.run(async (context) => {
+    const shape = context.workbook.worksheets.getItem(sheetName).shapes.getItem(shapeName);
+    shape.load("left,top");
+    await context.sync();
+    shape.left = shape.left + dx;
+    shape.top = shape.top + dy;
+    await context.sync();
+  });
+}
+
+export async function setShapeZOrder(
+  sheetName: string,
+  shapeName: string,
+  order: "BringToFront" | "BringForward" | "SendToBack" | "SendBackward"
+) {
+  await Excel.run(async (context) => {
+    const shape = context.workbook.worksheets.getItem(sheetName).shapes.getItem(shapeName);
+    const zOrderValue =
+      order === "BringToFront"
+        ? Excel.ShapeZOrder.bringToFront
+        : order === "BringForward"
+          ? Excel.ShapeZOrder.bringForward
+          : order === "SendToBack"
+            ? Excel.ShapeZOrder.sendToBack
+            : Excel.ShapeZOrder.sendBackward;
+    shape.setZOrder(zOrderValue);
+    await context.sync();
+  });
+}
+
+export async function setShapeGeometricType(
+  sheetName: string,
+  shapeName: string,
+  shapeType: Exclude<InsertableShapeType, "TextBox">
+) {
+  await Excel.run(async (context) => {
+    const shape = context.workbook.worksheets.getItem(sheetName).shapes.getItem(shapeName);
+    const geometricMap: Record<Exclude<InsertableShapeType, "TextBox">, Excel.GeometricShapeType> =
+      {
+        Rectangle: Excel.GeometricShapeType.rectangle,
+        RoundedRectangle: "Round2SameRectangle" as unknown as Excel.GeometricShapeType,
+        Chevron: "Chevron" as unknown as Excel.GeometricShapeType,
+        Hexagon: "Hexagon" as unknown as Excel.GeometricShapeType,
+        Diamond: "Diamond" as unknown as Excel.GeometricShapeType,
+        Oval: "Oval" as unknown as Excel.GeometricShapeType,
+      };
+    (shape as unknown as { geometricShapeType: Excel.GeometricShapeType }).geometricShapeType =
+      geometricMap[shapeType] ?? Excel.GeometricShapeType.rectangle;
+    await context.sync();
+  });
+}
+
+export async function alignShapeToSelection(
+  sheetName: string,
+  shapeName: string,
+  alignment: "Left" | "Center" | "Right" | "Top" | "Middle" | "Bottom"
+) {
+  await Excel.run(async (context) => {
+    const sheet = context.workbook.worksheets.getItem(sheetName);
+    const shape = sheet.shapes.getItem(shapeName);
+    const selection = context.workbook.getSelectedRange();
+    shape.load("left,top,width,height");
+    selection.load("left,top,width,height");
+    await context.sync();
+
+    const left = selection.left;
+    const top = selection.top;
+    const right = selection.left + selection.width;
+    const bottom = selection.top + selection.height;
+
+    if (alignment === "Left") {
+      shape.left = left;
+    } else if (alignment === "Center") {
+      shape.left = left + (selection.width - shape.width) / 2;
+    } else if (alignment === "Right") {
+      shape.left = right - shape.width;
+    } else if (alignment === "Top") {
+      shape.top = top;
+    } else if (alignment === "Middle") {
+      shape.top = top + (selection.height - shape.height) / 2;
+    } else if (alignment === "Bottom") {
+      shape.top = bottom - shape.height;
+    }
+
+    await context.sync();
   });
 }
 

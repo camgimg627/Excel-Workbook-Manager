@@ -181,6 +181,7 @@ interface CustomFormulaScheme {
 interface ShapeEditorState {
   shapeName: string;
   shapeType: InsertableShapeType;
+  bindingMode: "StaticText" | "NamedRange" | "Formula";
   geometricShapeType: string;
   left: number;
   top: number;
@@ -335,6 +336,9 @@ const parseThemeColorList = (value: string): string[] =>
     .map((item) => item.trim().toUpperCase())
     .filter((item) => /^#[0-9A-F]{6}$/.test(item))
     .slice(0, 10);
+
+const shapeColorInputValue = (value: string, fallback: string): string =>
+  value === NO_FILL_COLOR_TOKEN ? fallback : value;
 
 const NAMES_TABS: SecondaryTab[] = [
   { id: "ranges", label: "Ranges" },
@@ -1206,6 +1210,7 @@ const App: React.FC = () => {
   const [shapeState, setShapeState] = useState<ShapeEditorState>({
     shapeName: "",
     shapeType: "Rectangle",
+    bindingMode: "StaticText",
     geometricShapeType: "Rectangle",
     left: 0,
     top: 0,
@@ -3604,6 +3609,28 @@ const App: React.FC = () => {
       .slice(0, 25);
   }, [namedRanges, shapeState.bindingMode, shapeState.valueBinding]);
 
+  const shapeFormattingOptions = useMemo(
+    () =>
+      ({
+        fillColor: shapeState.fillColor,
+        outlineColor: shapeState.outlineColor,
+        fontColor: shapeState.fontColor,
+        text: shapeState.text,
+        lineWeight: shapeState.lineWeight,
+        fillTransparency: shapeState.fillTransparency,
+        width: shapeState.width,
+        height: shapeState.height,
+        rotation: shapeState.rotation,
+        textHorizontalAlignment: shapeState.textHorizontalAlignment,
+        textVerticalAlignment: shapeState.textVerticalAlignment,
+        fontSize: shapeState.fontSize,
+        bold: shapeState.bold,
+        italic: shapeState.italic,
+        lockAspectRatio: shapeState.lockAspectRatio,
+      }) satisfies ShapeFormatOptions,
+    [shapeState]
+  );
+
   const insertShapeFromSelection = async () => {
     setIsSubmitting(true);
     try {
@@ -3612,7 +3639,7 @@ const App: React.FC = () => {
         fillColor: shapeState.fillColor,
         outlineColor: shapeState.outlineColor,
         fontColor: shapeState.fontColor,
-        text: shapeState.text,
+        text: shapeState.bindingMode === "StaticText" ? shapeState.text : "",
       });
       setActiveShape(inserted);
       setShapeState((prev) => ({
@@ -3643,25 +3670,12 @@ const App: React.FC = () => {
     if (!activeShape) {
       return;
     }
-    const options: ShapeFormatOptions = {
-      fillColor: shapeState.fillColor,
-      outlineColor: shapeState.outlineColor,
-      fontColor: shapeState.fontColor,
-      text: shapeState.text,
-      lineWeight: shapeState.lineWeight,
-      fillTransparency: shapeState.fillTransparency,
-      width: shapeState.width,
-      height: shapeState.height,
-      rotation: shapeState.rotation,
-      textHorizontalAlignment: shapeState.textHorizontalAlignment,
-      textVerticalAlignment: shapeState.textVerticalAlignment,
-      fontSize: shapeState.fontSize,
-      bold: shapeState.bold,
-      italic: shapeState.italic,
-      lockAspectRatio: shapeState.lockAspectRatio,
-    } satisfies ShapeFormatOptions),
-    [shapeState]
-  );
+    await runAction("Apply shape formatting", async () => {
+      await updateShapeFormatting(activeShape.sheet, activeShape.name, shapeFormattingOptions);
+      const refreshed = await getShapeEditorRecord(activeShape.sheet, activeShape.name);
+      hydrateShapeEditor(refreshed);
+    });
+  };
 
   useEffect(() => {
     if (!activeShape) {
@@ -3712,30 +3726,6 @@ const App: React.FC = () => {
     return () => clearTimeout(timer);
   }, [activeShape, shapeState.bindingMode, shapeState.valueBinding, shapeState.formula]);
 
-  const insertShapeFromSelection = async () => {
-    setIsSubmitting(true);
-    try {
-      const inserted = await addShapeOnActiveCell({
-        shapeType: shapeState.shapeType,
-        fillColor: shapeState.fillColor,
-        outlineColor: shapeState.outlineColor,
-        fontColor: shapeState.fontColor,
-        text: shapeState.bindingMode === "StaticText" ? shapeState.text : "",
-      });
-      setActiveShape(inserted);
-      setShapeState((prev) => ({ ...prev, shapeName: inserted.name, width: inserted.width, height: inserted.height }));
-      setShapeAddOpen(false);
-      setStatusType("success");
-      setStatus(`Inserted ${inserted.shapeType} on ${inserted.anchorAddress}.`);
-    } catch (error) {
-      setStatusType("error");
-      const message = error instanceof Error ? error.message : String(error);
-      setStatus(`Insert shape failed: ${message}`);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
   const applyShapeAnchorFormula = async () => {
     if (!activeShape || !shapeState.formula.trim()) {
       return;
@@ -3747,6 +3737,29 @@ const App: React.FC = () => {
         shapeState.formula,
         activeShape.name
       );
+    });
+  };
+
+  const applyNamedRangeToShapeText = async (selectedName?: string) => {
+    if (!activeShape) {
+      return;
+    }
+    const rangeName = (selectedName ?? shapeState.valueBinding).trim();
+    if (!rangeName) {
+      return;
+    }
+    await runAction("Bind shape text to named range", async () => {
+      const valueText = await getNamedRangeValueText(rangeName);
+      setShapeState((prev) => ({
+        ...prev,
+        bindingMode: "NamedRange",
+        valueBinding: rangeName,
+        text: valueText,
+      }));
+      await updateShapeFormatting(activeShape.sheet, activeShape.name, {
+        ...shapeFormattingOptions,
+        text: valueText,
+      });
     });
   };
 
