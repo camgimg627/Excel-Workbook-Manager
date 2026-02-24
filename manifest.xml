@@ -19,16 +19,24 @@
     <SourceLocation DefaultValue="https://localhost:3000/taskpane.html"/>
   </DefaultSettings>
   <Permissions>ReadWriteDocument</Permissions>
-  <VersionOverrides xmlns="http://schemas.microsoft.com/office/taskpaneappversionoverrides" xsi:type="VersionOverridesV1_0">
+  <VersionOverrides xmlns="http://schemas.microsoft.com/office/taskpaneappversionoverrides" xsi:type="VersionOverridesV1_1">
+    <Requirements>
+      <bt:Sets DefaultMinVersion="1.1">
+        <bt:Set Name="SharedRuntime" MinVersion="1.1"/>
+      </bt:Sets>
+    </Requirements>
     <Hosts>
       <Host xsi:type="Workbook">
+        <Runtimes>
+          <Runtime resid="Taskpane.Url" lifetime="long"/>
+        </Runtimes>
         <DesktopFormFactor>
           <GetStarted>
             <Title resid="GetStarted.Title"/>
             <Description resid="GetStarted.Description"/>
             <LearnMoreUrl resid="GetStarted.LearnMoreUrl"/>
           </GetStarted>
-          <FunctionFile resid="Commands.Url"/>
+          <FunctionFile resid="Taskpane.Url"/>
           <ExtensionPoint xsi:type="PrimaryCommandSurface">
             <OfficeTab id="TabHome">
               <Group id="CommandsGroup">
@@ -54,8 +62,45 @@
                     <SourceLocation resid="Taskpane.Url"/>
                   </Action>
                 </Control>
+                <Control xsi:type="Button" id="OpenFormulaEditorButton">
+                  <Label resid="OpenFormulaEditorButton.Label"/>
+                  <Supertip>
+                    <Title resid="OpenFormulaEditorButton.Label"/>
+                    <Description resid="OpenFormulaEditorButton.Tooltip"/>
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="Icon.16x16"/>
+                    <bt:Image size="32" resid="Icon.32x32"/>
+                    <bt:Image size="80" resid="Icon.80x80"/>
+                  </Icon>
+                  <Action xsi:type="ExecuteFunction">
+                    <FunctionName>openFormulaEditorCommand</FunctionName>
+                  </Action>
+                </Control>
+                <Control xsi:type="Button" id="OpenAndPullFormulaEditorButton">
+                  <Label resid="OpenAndPullFormulaEditorButton.Label"/>
+                  <Supertip>
+                    <Title resid="OpenAndPullFormulaEditorButton.Label"/>
+                    <Description resid="OpenAndPullFormulaEditorButton.Tooltip"/>
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="Icon.16x16"/>
+                    <bt:Image size="32" resid="Icon.32x32"/>
+                    <bt:Image size="80" resid="Icon.80x80"/>
+                  </Icon>
+                  <Action xsi:type="ExecuteFunction">
+                    <FunctionName>openAndPullFormulaEditorCommand</FunctionName>
+                  </Action>
+                </Control>
               </Group>
             </OfficeTab>
+          </ExtensionPoint>
+          <ExtensionPoint xsi:type="KeyboardShortcuts">
+            <Shortcut resid="OpenAndPullFormulaEditor.Shortcut">
+              <Action xsi:type="ExecuteFunction">
+                <FunctionName>openAndPullFormulaEditorCommand</FunctionName>
+              </Action>
+            </Shortcut>
           </ExtensionPoint>
         </DesktopFormFactor>
       </Host>
@@ -73,12 +118,17 @@
       </bt:Urls>
       <bt:ShortStrings>
         <bt:String id="GetStarted.Title" DefaultValue="Get started with your sample add-in!"/>
-        <bt:String id="CommandsGroup.Label" DefaultValue="Commands Group"/>
-        <bt:String id="TaskpaneButton.Label" DefaultValue="Show Task Pane"/>
+        <bt:String id="CommandsGroup.Label" DefaultValue="Workbook Manager"/>
+        <bt:String id="TaskpaneButton.Label" DefaultValue="Open Task Pane"/>
+        <bt:String id="OpenFormulaEditorButton.Label" DefaultValue="Open Formula Editor"/>
+        <bt:String id="OpenAndPullFormulaEditorButton.Label" DefaultValue="Edit Active Formula"/>
+        <bt:String id="OpenAndPullFormulaEditor.Shortcut" DefaultValue="Ctrl+Shift+Alt+E"/>
       </bt:ShortStrings>
       <bt:LongStrings>
         <bt:String id="GetStarted.Description" DefaultValue="Your sample add-in loaded successfully. Go to the HOME tab and click the 'Show Task Pane' button to get started."/>
         <bt:String id="TaskpaneButton.Tooltip" DefaultValue="Click to Show a Taskpane"/>
+        <bt:String id="OpenFormulaEditorButton.Tooltip" DefaultValue="Open Workbook Manager directly in Formula Editor and pull the active-cell formula."/>
+        <bt:String id="OpenAndPullFormulaEditorButton.Tooltip" DefaultValue="Open Workbook Manager Formula Editor and pull the active cell formula immediately."/>
       </bt:LongStrings>
     </Resources>
   </VersionOverrides>

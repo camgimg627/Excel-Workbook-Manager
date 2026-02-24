@@ -280,6 +280,8 @@ const WORKBOOK_THEME_SWATCHES = [
   "#997300",
 ];
 const NO_FILL_COLOR_TOKEN = "__NO_FILL__";
+const OPEN_FORMULA_EDITOR_SIGNAL_KEY = "wbm.openFormulaEditor.request";
+const OPEN_FORMULA_EDITOR_AND_PULL_SIGNAL = "open-and-pull";
 
 const SHAPE_THEMES: ShapeTheme[] = [
   {
@@ -2357,6 +2359,79 @@ const App: React.FC = () => {
       setTestFormulaCall(activeCell.formula);
     });
   };
+
+  useEffect(() => {
+    let disposed = false;
+    const runtime = (window as unknown as { OfficeRuntime?: typeof OfficeRuntime }).OfficeRuntime;
+
+    const readDocumentSignal = (): string | null => {
+      try {
+        return (Office.context.document.settings.get(OPEN_FORMULA_EDITOR_SIGNAL_KEY) as string) || null;
+      } catch {
+        return null;
+      }
+    };
+
+    const clearDocumentSignal = async (): Promise<void> => {
+      try {
+        Office.context.document.settings.remove(OPEN_FORMULA_EDITOR_SIGNAL_KEY);
+        await new Promise<void>((resolve) => {
+          Office.context.document.settings.saveAsync(() => resolve());
+        });
+      } catch {
+        // Ignore clear failures.
+      }
+    };
+
+    const consumeSignal = async () => {
+      try {
+        const runtimeSignal = runtime?.storage
+          ? await runtime.storage.getItem(OPEN_FORMULA_EDITOR_SIGNAL_KEY)
+          : null;
+        const documentSignal = readDocumentSignal();
+        const signal = runtimeSignal || documentSignal;
+        if (!signal || disposed) {
+          return;
+        }
+        if (runtime?.storage) {
+          await runtime.storage.removeItem(OPEN_FORMULA_EDITOR_SIGNAL_KEY);
+        }
+        await clearDocumentSignal();
+        if (disposed) {
+          return;
+        }
+
+        setPrimaryTab("Names");
+        setSecondaryTabId("functions");
+        if (signal === OPEN_FORMULA_EDITOR_AND_PULL_SIGNAL) {
+          await runAction("Open active cell formula in editor", async () => {
+            const activeCell = await getActiveCellFormulaState();
+            setActiveFormulaPrompt(activeCell);
+            if (!activeCell.hasFormula) {
+              throw new Error(
+                `Cell ${activeCell.sheet}!${activeCell.address} does not contain a formula.`
+              );
+            }
+            setFormulaText(activeCell.formula);
+            setFormulaMode("Formula");
+            setTestFormulaCall(activeCell.formula);
+          });
+        }
+      } catch {
+        // Ignore signal read errors to keep editor responsive.
+      }
+    };
+
+    void consumeSignal();
+    const timerId = window.setInterval(() => {
+      void consumeSignal();
+    }, 1000);
+
+    return () => {
+      disposed = true;
+      window.clearInterval(timerId);
+    };
+  }, []);
 
   const pushFormulaToActiveCell = async () => {
     await runAction("Apply editor formula to active cell", async () => {

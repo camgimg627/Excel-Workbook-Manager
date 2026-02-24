@@ -1,35 +1,56 @@
-/*
- * Copyright (c) Microsoft Corporation. All rights reserved. Licensed under the MIT license.
- * See LICENSE in the project root for license information.
- */
+/* global Office, OfficeRuntime */
 
-/* global Office */
+const OPEN_FORMULA_EDITOR_SIGNAL_KEY = "wbm.openFormulaEditor.request";
+const OPEN_FORMULA_EDITOR_ONLY_SIGNAL = "open-only";
+const OPEN_FORMULA_EDITOR_AND_PULL_SIGNAL = "open-and-pull";
 
-Office.onReady(() => {
-  // If needed, Office.js is ready to be called.
-});
-
-/**
- * Shows a notification when the add-in command is executed.
- * @param event
- */
-function action(event: Office.AddinCommands.Event) {
-  const message: Office.NotificationMessageDetails = {
-    type: Office.MailboxEnums.ItemNotificationMessageType.InformationalMessage,
-    message: "Performed action.",
-    icon: "Icon.80x80",
-    persistent: true,
-  };
-
-  // Show a notification message.
-  Office.context.mailbox.item?.notificationMessages.replaceAsync(
-    "ActionPerformanceNotification",
-    message
-  );
-
-  // Be sure to indicate when the add-in command function is complete.
-  event.completed();
+async function setFormulaEditorSignal(value: string): Promise<void> {
+  if (typeof OfficeRuntime !== "undefined" && OfficeRuntime.storage) {
+    await OfficeRuntime.storage.setItem(OPEN_FORMULA_EDITOR_SIGNAL_KEY, value);
+  }
+  if (Office.context?.document?.settings) {
+    Office.context.document.settings.set(OPEN_FORMULA_EDITOR_SIGNAL_KEY, value);
+    await new Promise<void>((resolve, reject) => {
+      Office.context.document.settings.saveAsync((result) => {
+        if (result.status === Office.AsyncResultStatus.Succeeded) {
+          resolve();
+          return;
+        }
+        reject(result.error);
+      });
+    });
+  }
 }
 
-// Register the function with Office.
-Office.actions.associate("action", action);
+Office.onReady(() => {
+  // Office.js is ready.
+});
+
+async function openFormulaEditorCommand(event: Office.AddinCommands.Event) {
+  try {
+    await setFormulaEditorSignal(OPEN_FORMULA_EDITOR_ONLY_SIGNAL);
+    if (Office.addin && typeof Office.addin.showAsTaskpane === "function") {
+      await Office.addin.showAsTaskpane();
+    }
+  } catch {
+    // Best-effort command; the task pane will still handle the signal on next open.
+  } finally {
+    event.completed();
+  }
+}
+
+async function openAndPullFormulaEditorCommand(event: Office.AddinCommands.Event) {
+  try {
+    await setFormulaEditorSignal(OPEN_FORMULA_EDITOR_AND_PULL_SIGNAL);
+    if (Office.addin && typeof Office.addin.showAsTaskpane === "function") {
+      await Office.addin.showAsTaskpane();
+    }
+  } catch {
+    // Best-effort command.
+  } finally {
+    event.completed();
+  }
+}
+
+Office.actions.associate("openFormulaEditorCommand", openFormulaEditorCommand);
+Office.actions.associate("openAndPullFormulaEditorCommand", openAndPullFormulaEditorCommand);
