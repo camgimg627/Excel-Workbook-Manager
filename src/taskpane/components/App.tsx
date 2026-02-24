@@ -24,9 +24,11 @@ import {
   applyAccentFill,
   alignShapeToSelection,
   applyCellStylePreset,
+  applyFormulaToActiveCell,
   applyFormulaToShapeAnchorCell,
   applyTableStyle,
   deleteNamedRangeWithOptions,
+  getActiveCellFormulaState,
   getCurrentSelectionAddress,
   getNamedRangeValueText,
   getNamedRanges,
@@ -128,6 +130,13 @@ interface FunctionDefinition {
   name: string;
   description: string;
   params: string[];
+}
+
+interface ActiveFormulaPrompt {
+  sheet: string;
+  address: string;
+  formula: string;
+  hasFormula: boolean;
 }
 
 interface FormulaSuggestion {
@@ -999,6 +1008,28 @@ const useStyles = makeStyles({
     fontSize: "10px",
     color: "#2f63b7",
   },
+  formulaPromptCard: {
+    border: "1px solid #bfd2f5",
+    borderRadius: "4px",
+    backgroundColor: "#f2f7ff",
+    padding: "8px",
+    display: "grid",
+    gap: "6px",
+    marginBottom: "8px",
+  },
+  formulaPromptTitle: {
+    fontSize: "11px",
+    fontWeight: 700,
+    color: "#194a96",
+  },
+  formulaPromptText: {
+    fontSize: "10px",
+    color: "#2f3b4a",
+  },
+  formulaPromptMeta: {
+    fontSize: "10px",
+    color: "#4f5d6d",
+  },
   formulaPaletteEditor: {
     display: "grid",
     gap: "6px",
@@ -1166,6 +1197,7 @@ const App: React.FC = () => {
   const [customFunctionParams, setCustomFunctionParams] = useState<string[]>(["param1", "param2"]);
   const [testFormulaCall, setTestFormulaCall] = useState<string>("");
   const [formulaOutput, setFormulaOutput] = useState<FormulaEvaluationResult | null>(null);
+  const [activeFormulaPrompt, setActiveFormulaPrompt] = useState<ActiveFormulaPrompt | null>(null);
   const [formulaCursor, setFormulaCursor] = useState<number>(formulaText.length);
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState<number>(0);
   const [formulaContextMenu, setFormulaContextMenu] = useState<{ x: number; y: number } | null>(null);
@@ -2306,6 +2338,31 @@ const App: React.FC = () => {
       setStatus(`Formula test failed: ${message}`);
       setFormulaOutput(null);
     }
+  };
+
+  const pullActiveCellFormula = async () => {
+    await runAction("Open active cell formula in editor", async () => {
+      const activeCell = await getActiveCellFormulaState();
+      setActiveFormulaPrompt(activeCell);
+      if (!activeCell.hasFormula) {
+        throw new Error(`Cell ${activeCell.sheet}!${activeCell.address} does not contain a formula.`);
+      }
+      setFormulaText(activeCell.formula);
+      setFormulaMode("Formula");
+      setTestFormulaCall(activeCell.formula);
+    });
+  };
+
+  const pushFormulaToActiveCell = async () => {
+    await runAction("Apply editor formula to active cell", async () => {
+      const normalized = formulaText.trim();
+      if (!normalized) {
+        throw new Error("Formula editor is empty.");
+      }
+      await applyFormulaToActiveCell(normalized);
+      const refreshed = await getActiveCellFormulaState();
+      setActiveFormulaPrompt(refreshed);
+    });
   };
 
   useEffect(() => {
@@ -3533,6 +3590,9 @@ const App: React.FC = () => {
   }, [selectedShapeTheme.id]);
 
   const shapeValueSuggestions = useMemo(() => {
+    if (shapeState.bindingMode !== "NamedRange") {
+      return [];
+    }
     const token = shapeState.valueBinding.trim().toLowerCase();
     if (!token) {
       return [];
@@ -3542,10 +3602,7 @@ const App: React.FC = () => {
       .map((item) => item.name)
       .filter((name) => name.toLowerCase().includes(token))
       .slice(0, 25);
-  }, [namedRanges, shapeState.valueBinding]);
-
-  const shapeColorInputValue = (value: string, fallback: string) =>
-    value === NO_FILL_COLOR_TOKEN ? fallback : value;
+  }, [namedRanges, shapeState.bindingMode, shapeState.valueBinding]);
 
   const insertShapeFromSelection = async () => {
     setIsSubmitting(true);
@@ -3602,51 +3659,78 @@ const App: React.FC = () => {
       bold: shapeState.bold,
       italic: shapeState.italic,
       lockAspectRatio: shapeState.lockAspectRatio,
-    };
-    await runAction("Update shape formatting", async () => {
-      await updateShapeFormatting(activeShape.sheet, activeShape.name, options);
-    });
-  };
+    } satisfies ShapeFormatOptions),
+    [shapeState]
+  );
 
-  const applyNamedRangeToShapeText = async (rangeName?: string) => {
+  useEffect(() => {
     if (!activeShape) {
-      return;
+      return undefined;
     }
-    const target = (rangeName ?? shapeState.valueBinding).trim();
-    if (!target) {
-      return;
+    const timer = setTimeout(() => {
+      void updateShapeFormatting(activeShape.sheet, activeShape.name, shapeFormattingOptions).catch(
+        (error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          setStatusType("error");
+          setStatus(`Auto-update shape formatting failed: ${message}`);
+        }
+      );
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [activeShape, shapeFormattingOptions]);
+
+  useEffect(() => {
+    if (!activeShape) {
+      return undefined;
     }
+    const timer = setTimeout(() => {
+      if (shapeState.bindingMode === "NamedRange" && shapeState.valueBinding.trim()) {
+        void getNamedRangeValueText(shapeState.valueBinding.trim())
+          .then((valueText) => {
+            setShapeState((prev) => (prev.text === valueText ? prev : { ...prev, text: valueText }));
+          })
+          .catch((error) => {
+            const message = error instanceof Error ? error.message : String(error);
+            setStatusType("error");
+            setStatus(`Named range binding failed: ${message}`);
+          });
+        return;
+      }
+      if (shapeState.bindingMode === "Formula" && shapeState.formula.trim()) {
+        void applyFormulaToShapeAnchorCell(
+          activeShape.sheet,
+          activeShape.anchorAddress,
+          shapeState.formula,
+          activeShape.name
+        ).catch((error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          setStatusType("error");
+          setStatus(`Formula binding failed: ${message}`);
+        });
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [activeShape, shapeState.bindingMode, shapeState.valueBinding, shapeState.formula]);
+
+  const insertShapeFromSelection = async () => {
     setIsSubmitting(true);
     try {
-      const valueText = await getNamedRangeValueText(target);
-      setShapeState((prev) => ({
-        ...prev,
-        valueBinding: target,
-        text: valueText,
-      }));
-      await updateShapeFormatting(activeShape.sheet, activeShape.name, {
+      const inserted = await addShapeOnActiveCell({
+        shapeType: shapeState.shapeType,
         fillColor: shapeState.fillColor,
         outlineColor: shapeState.outlineColor,
         fontColor: shapeState.fontColor,
-        text: valueText,
-        lineWeight: shapeState.lineWeight,
-        fillTransparency: shapeState.fillTransparency,
-        width: shapeState.width,
-        height: shapeState.height,
-        rotation: shapeState.rotation,
-        textHorizontalAlignment: shapeState.textHorizontalAlignment,
-        textVerticalAlignment: shapeState.textVerticalAlignment,
-        fontSize: shapeState.fontSize,
-        bold: shapeState.bold,
-        italic: shapeState.italic,
-        lockAspectRatio: shapeState.lockAspectRatio,
+        text: shapeState.bindingMode === "StaticText" ? shapeState.text : "",
       });
+      setActiveShape(inserted);
+      setShapeState((prev) => ({ ...prev, shapeName: inserted.name, width: inserted.width, height: inserted.height }));
+      setShapeAddOpen(false);
       setStatusType("success");
-      setStatus(`Shape value bound to named range "${target}".`);
+      setStatus(`Inserted ${inserted.shapeType} on ${inserted.anchorAddress}.`);
     } catch (error) {
       setStatusType("error");
       const message = error instanceof Error ? error.message : String(error);
-      setStatus(`Named range binding failed: ${message}`);
+      setStatus(`Insert shape failed: ${message}`);
     } finally {
       setIsSubmitting(false);
     }
@@ -3717,11 +3801,7 @@ const App: React.FC = () => {
       return;
     }
     await runAction("Move shape to selected cell", async () => {
-      const moved = await moveShapeToSelection(
-        activeShape.sheet,
-        activeShape.name,
-        activeShape.anchorAddress
-      );
+      const moved = await moveShapeToSelection(activeShape.sheet, activeShape.name, activeShape.anchorAddress);
       setActiveShape((prev) => (prev ? { ...prev, anchorAddress: moved.anchorAddress } : prev));
       const refreshed = await getShapeEditorRecord(activeShape.sheet, activeShape.name);
       hydrateShapeEditor(refreshed);
@@ -3795,17 +3875,10 @@ const App: React.FC = () => {
       <div className={styles.sectionCard}>
         <Text className={styles.sectionTitle}>Shapes/Text Boxes</Text>
         <div className={styles.shapeToolbar}>
-          <button
-            type="button"
-            className={styles.plusBtn}
-            title="Add shape or text box"
-            onClick={() => setShapeAddOpen(true)}
-          >
+          <button type="button" className={styles.plusBtn} title="Add shape or text box" onClick={() => setShapeAddOpen(true)}>
             +
           </button>
-          <Text className={styles.shapeHint}>
-            Add a shape/text box on the active cell and manage formatting/binding below.
-          </Text>
+          <Text className={styles.shapeHint}>Formatting is now applied automatically as you edit values.</Text>
         </div>
         {activeShape ? (
           <>
@@ -3814,13 +3887,8 @@ const App: React.FC = () => {
               <div className={styles.collapsibleBody}>
                 <div className={styles.modalInlineRow}>
                   <div className={styles.modalRow}>
-                    <Text className={styles.modalLabel}>Active Shape</Text>
-                    <Input
-                      value={shapeState.shapeName || activeShape.name}
-                      onChange={(_, data) =>
-                        setShapeState((prev) => ({ ...prev, shapeName: data.value }))
-                      }
-                    />
+                    <Text className={styles.modalLabel}>Name</Text>
+                    <Input value={shapeState.shapeName || activeShape.name} onChange={(_, data) => setShapeState((prev) => ({ ...prev, shapeName: data.value }))} />
                   </div>
                   <div className={styles.modalRow}>
                     <Text className={styles.modalLabel}>Anchor Cell</Text>
@@ -4373,9 +4441,7 @@ const App: React.FC = () => {
             </div>
           </>
         ) : (
-          <Text className={styles.placeholder}>
-            No active shape in this session. Use the + button to insert one on the selected cell.
-          </Text>
+          <Text className={styles.placeholder}>No active shape in this session. Use the + button to insert one on the selected cell.</Text>
         )}
       </div>
       {shapeAddOpen ? (
@@ -4520,16 +4586,8 @@ const App: React.FC = () => {
               </div>
             </div>
             <div className={styles.modalActions}>
-              <Button className={styles.miniBtn} onClick={() => setShapeAddOpen(false)}>
-                Cancel
-              </Button>
-              <Button
-                className={styles.miniBtn}
-                disabled={isSubmitting}
-                onClick={() => void insertShapeFromSelection()}
-              >
-                Insert on Active Cell
-              </Button>
+              <Button className={styles.miniBtn} onClick={() => setShapeAddOpen(false)}>Cancel</Button>
+              <Button className={styles.miniBtn} disabled={isSubmitting} onClick={() => void insertShapeFromSelection()}>Insert on Active Cell</Button>
             </div>
           </div>
         </div>
@@ -4541,6 +4599,26 @@ const App: React.FC = () => {
     <>
       <div className={styles.sectionCard}>
         <Text className={styles.sectionTitle}>Formula Bar</Text>
+        <div className={styles.formulaPromptCard}>
+          <Text className={styles.formulaPromptTitle}>Use Workbook Manager Formula Editor</Text>
+          <Text className={styles.formulaPromptText}>
+            If you are editing in Excel&apos;s formula bar, pull that formula into this editor for autocomplete,
+            formatting, and testing.
+          </Text>
+          <Text className={styles.formulaPromptMeta}>
+            {activeFormulaPrompt
+              ? `Active cell: ${activeFormulaPrompt.sheet}!${activeFormulaPrompt.address}`
+              : "Active cell: not captured yet"}
+          </Text>
+          <div className={styles.topActions}>
+            <Button className={styles.miniBtn} onClick={() => void pullActiveCellFormula()}>
+              Open Active Cell Formula
+            </Button>
+            <Button className={styles.miniBtn} onClick={() => void pushFormulaToActiveCell()}>
+              Apply Formula Back to Active Cell
+            </Button>
+          </div>
+        </div>
         <div className={styles.formulaMenuBar}>
           <Select
             className={styles.smallSelect}
