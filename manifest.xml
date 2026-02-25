@@ -19,24 +19,16 @@
     <SourceLocation DefaultValue="https://localhost:3000/taskpane.html"/>
   </DefaultSettings>
   <Permissions>ReadWriteDocument</Permissions>
-  <VersionOverrides xmlns="http://schemas.microsoft.com/office/taskpaneappversionoverrides" xsi:type="VersionOverridesV1_1">
-    <Requirements>
-      <bt:Sets DefaultMinVersion="1.1">
-        <bt:Set Name="SharedRuntime" MinVersion="1.1"/>
-      </bt:Sets>
-    </Requirements>
+  <VersionOverrides xmlns="http://schemas.microsoft.com/office/taskpaneappversionoverrides" xsi:type="VersionOverridesV1_0">
     <Hosts>
       <Host xsi:type="Workbook">
-        <Runtimes>
-          <Runtime resid="Taskpane.Url" lifetime="long"/>
-        </Runtimes>
         <DesktopFormFactor>
           <GetStarted>
             <Title resid="GetStarted.Title"/>
             <Description resid="GetStarted.Description"/>
             <LearnMoreUrl resid="GetStarted.LearnMoreUrl"/>
           </GetStarted>
-          <FunctionFile resid="Taskpane.Url"/>
+          <FunctionFile resid="Commands.Url"/>
           <ExtensionPoint xsi:type="PrimaryCommandSurface">
             <OfficeTab id="TabHome">
               <Group id="CommandsGroup">
@@ -78,10 +70,10 @@
                   </Action>
                 </Control>
                 <Control xsi:type="Button" id="OpenAndPullFormulaEditorButton">
-                  <Label resid="OpenAndPullFormulaEditorButton.Label"/>
+                  <Label resid="OAPFormulaBtn.Label"/>
                   <Supertip>
-                    <Title resid="OpenAndPullFormulaEditorButton.Label"/>
-                    <Description resid="OpenAndPullFormulaEditorButton.Tooltip"/>
+                    <Title resid="OAPFormulaBtn.Label"/>
+                    <Description resid="OAPFormulaBtn.Tooltip"/>
                   </Supertip>
                   <Icon>
                     <bt:Image size="16" resid="Icon.16x16"/>
@@ -155,23 +147,6 @@
               </Group>
             </OfficeTab>
           </ExtensionPoint>
-          <ExtensionPoint xsi:type="KeyboardShortcuts">
-            <Shortcut resid="OpenAndPullFormulaEditor.Shortcut">
-              <Action xsi:type="ExecuteFunction">
-                <FunctionName>openAndPullFormulaEditorCommand</FunctionName>
-              </Action>
-            </Shortcut>
-            <Shortcut resid="PullFormula.Shortcut">
-              <Action xsi:type="ExecuteFunction">
-                <FunctionName>pullFormulaCommand</FunctionName>
-              </Action>
-            </Shortcut>
-            <Shortcut resid="ApplyFormula.Shortcut">
-              <Action xsi:type="ExecuteFunction">
-                <FunctionName>applyFormulaCommand</FunctionName>
-              </Action>
-            </Shortcut>
-          </ExtensionPoint>
         </DesktopFormFactor>
       </Host>
     </Hosts>
@@ -191,25 +166,182 @@
         <bt:String id="CommandsGroup.Label" DefaultValue="Workbook Manager"/>
         <bt:String id="TaskpaneButton.Label" DefaultValue="Open Task Pane"/>
         <bt:String id="OpenFormulaEditorButton.Label" DefaultValue="Open Formula Editor"/>
-        <bt:String id="OpenAndPullFormulaEditorButton.Label" DefaultValue="Edit Active Formula"/>
-        <bt:String id="OpenAndPullFormulaEditor.Shortcut" DefaultValue="Ctrl+Shift+Alt+E"/>
+        <bt:String id="OAPFormulaBtn.Label" DefaultValue="Edit Active Formula"/>
         <bt:String id="PullFormulaButton.Label" DefaultValue="Pull Formula"/>
         <bt:String id="ApplyFormulaButton.Label" DefaultValue="Apply Formula"/>
         <bt:String id="BeautifyFormulaButton.Label" DefaultValue="Beautify"/>
         <bt:String id="InsertSelectionButton.Label" DefaultValue="Insert Selection"/>
-        <bt:String id="PullFormula.Shortcut" DefaultValue="Ctrl+Shift+Alt+P"/>
-        <bt:String id="ApplyFormula.Shortcut" DefaultValue="Ctrl+Shift+Alt+A"/>
+        <bt:String id="EditFml.Shortcut" DefaultValue="Ctrl+Shift+Alt+E"/>
+        <bt:String id="PullFml.Shortcut" DefaultValue="Ctrl+Shift+Alt+P"/>
+        <bt:String id="ApplyFml.Shortcut" DefaultValue="Ctrl+Shift+Alt+A"/>
       </bt:ShortStrings>
       <bt:LongStrings>
         <bt:String id="GetStarted.Description" DefaultValue="Your sample add-in loaded successfully. Go to the HOME tab and click the 'Show Task Pane' button to get started."/>
         <bt:String id="TaskpaneButton.Tooltip" DefaultValue="Click to Show a Taskpane"/>
         <bt:String id="OpenFormulaEditorButton.Tooltip" DefaultValue="Open Workbook Manager directly in Formula Editor."/>
-        <bt:String id="OpenAndPullFormulaEditorButton.Tooltip" DefaultValue="Open Workbook Manager Formula Editor and pull the active cell formula immediately."/>
+        <bt:String id="OAPFormulaBtn.Tooltip" DefaultValue="Open Workbook Manager Formula Editor and pull the active cell formula immediately."/>
         <bt:String id="PullFormulaButton.Tooltip" DefaultValue="Pull the active cell formula into the Workbook Manager Formula Editor."/>
         <bt:String id="ApplyFormulaButton.Tooltip" DefaultValue="Apply the current Workbook Manager Formula Editor text back to the active cell."/>
         <bt:String id="BeautifyFormulaButton.Tooltip" DefaultValue="Beautify the formula currently in Workbook Manager Formula Editor."/>
         <bt:String id="InsertSelectionButton.Tooltip" DefaultValue="Insert the current Excel selection (or matching named range) into the Workbook Manager Formula Editor."/>
       </bt:LongStrings>
     </Resources>
+    <VersionOverrides xmlns="http://schemas.microsoft.com/office/taskpaneappversionoverrides/1.1" xsi:type="VersionOverridesV1_1">
+      <Requirements>
+        <bt:Sets DefaultMinVersion="1.1">
+          <bt:Set Name="SharedRuntime" MinVersion="1.1"/>
+        </bt:Sets>
+      </Requirements>
+      <Hosts>
+        <Host xsi:type="Workbook">
+          <Runtimes>
+            <Runtime resid="Taskpane.Url" lifetime="long"/>
+          </Runtimes>
+          <DesktopFormFactor>
+            <GetStarted>
+              <Title resid="GetStarted.Title"/>
+              <Description resid="GetStarted.Description"/>
+              <LearnMoreUrl resid="GetStarted.LearnMoreUrl"/>
+            </GetStarted>
+            <FunctionFile resid="Taskpane.Url"/>
+            <ExtensionPoint xsi:type="PrimaryCommandSurface">
+              <OfficeTab id="TabHome">
+                <Group id="CommandsGroup">
+                  <Label resid="CommandsGroup.Label"/>
+                  <Icon>
+                    <bt:Image size="16" resid="Icon.16x16"/>
+                    <bt:Image size="32" resid="Icon.32x32"/>
+                    <bt:Image size="80" resid="Icon.80x80"/>
+                  </Icon>
+                  <Control xsi:type="Button" id="TaskpaneButton">
+                    <Label resid="TaskpaneButton.Label"/>
+                    <Supertip>
+                      <Title resid="TaskpaneButton.Label"/>
+                      <Description resid="TaskpaneButton.Tooltip"/>
+                    </Supertip>
+                    <Icon>
+                      <bt:Image size="16" resid="Icon.16x16"/>
+                      <bt:Image size="32" resid="Icon.32x32"/>
+                      <bt:Image size="80" resid="Icon.80x80"/>
+                    </Icon>
+                    <Action xsi:type="ShowTaskpane">
+                      <TaskpaneId>ButtonId1</TaskpaneId>
+                      <SourceLocation resid="Taskpane.Url"/>
+                    </Action>
+                  </Control>
+                  <Control xsi:type="Button" id="OpenFormulaEditorButton">
+                    <Label resid="OpenFormulaEditorButton.Label"/>
+                    <Supertip>
+                      <Title resid="OpenFormulaEditorButton.Label"/>
+                      <Description resid="OpenFormulaEditorButton.Tooltip"/>
+                    </Supertip>
+                    <Icon>
+                      <bt:Image size="16" resid="Icon.16x16"/>
+                      <bt:Image size="32" resid="Icon.32x32"/>
+                      <bt:Image size="80" resid="Icon.80x80"/>
+                    </Icon>
+                    <Action xsi:type="ExecuteFunction">
+                      <FunctionName>openFormulaEditorCommand</FunctionName>
+                    </Action>
+                  </Control>
+                  <Control xsi:type="Button" id="OpenAndPullFormulaEditorButton">
+                    <Label resid="OAPFormulaBtn.Label"/>
+                    <Supertip>
+                      <Title resid="OAPFormulaBtn.Label"/>
+                      <Description resid="OAPFormulaBtn.Tooltip"/>
+                    </Supertip>
+                    <Icon>
+                      <bt:Image size="16" resid="Icon.16x16"/>
+                      <bt:Image size="32" resid="Icon.32x32"/>
+                      <bt:Image size="80" resid="Icon.80x80"/>
+                    </Icon>
+                    <Action xsi:type="ExecuteFunction">
+                      <FunctionName>openAndPullFormulaEditorCommand</FunctionName>
+                    </Action>
+                  </Control>
+                  <Control xsi:type="Button" id="PullFormulaButton">
+                    <Label resid="PullFormulaButton.Label"/>
+                    <Supertip>
+                      <Title resid="PullFormulaButton.Label"/>
+                      <Description resid="PullFormulaButton.Tooltip"/>
+                    </Supertip>
+                    <Icon>
+                      <bt:Image size="16" resid="Icon.16x16"/>
+                      <bt:Image size="32" resid="Icon.32x32"/>
+                      <bt:Image size="80" resid="Icon.80x80"/>
+                    </Icon>
+                    <Action xsi:type="ExecuteFunction">
+                      <FunctionName>pullFormulaCommand</FunctionName>
+                    </Action>
+                  </Control>
+                  <Control xsi:type="Button" id="ApplyFormulaButton">
+                    <Label resid="ApplyFormulaButton.Label"/>
+                    <Supertip>
+                      <Title resid="ApplyFormulaButton.Label"/>
+                      <Description resid="ApplyFormulaButton.Tooltip"/>
+                    </Supertip>
+                    <Icon>
+                      <bt:Image size="16" resid="Icon.16x16"/>
+                      <bt:Image size="32" resid="Icon.32x32"/>
+                      <bt:Image size="80" resid="Icon.80x80"/>
+                    </Icon>
+                    <Action xsi:type="ExecuteFunction">
+                      <FunctionName>applyFormulaCommand</FunctionName>
+                    </Action>
+                  </Control>
+                  <Control xsi:type="Button" id="BeautifyFormulaButton">
+                    <Label resid="BeautifyFormulaButton.Label"/>
+                    <Supertip>
+                      <Title resid="BeautifyFormulaButton.Label"/>
+                      <Description resid="BeautifyFormulaButton.Tooltip"/>
+                    </Supertip>
+                    <Icon>
+                      <bt:Image size="16" resid="Icon.16x16"/>
+                      <bt:Image size="32" resid="Icon.32x32"/>
+                      <bt:Image size="80" resid="Icon.80x80"/>
+                    </Icon>
+                    <Action xsi:type="ExecuteFunction">
+                      <FunctionName>beautifyFormulaCommand</FunctionName>
+                    </Action>
+                  </Control>
+                  <Control xsi:type="Button" id="InsertSelectionButton">
+                    <Label resid="InsertSelectionButton.Label"/>
+                    <Supertip>
+                      <Title resid="InsertSelectionButton.Label"/>
+                      <Description resid="InsertSelectionButton.Tooltip"/>
+                    </Supertip>
+                    <Icon>
+                      <bt:Image size="16" resid="Icon.16x16"/>
+                      <bt:Image size="32" resid="Icon.32x32"/>
+                      <bt:Image size="80" resid="Icon.80x80"/>
+                    </Icon>
+                    <Action xsi:type="ExecuteFunction">
+                      <FunctionName>insertSelectionFormulaCommand</FunctionName>
+                    </Action>
+                  </Control>
+                </Group>
+              </OfficeTab>
+            </ExtensionPoint>
+            <ExtensionPoint xsi:type="KeyboardShortcuts">
+              <Shortcut resid="EditFml.Shortcut">
+                <Action xsi:type="ExecuteFunction">
+                  <FunctionName>openAndPullFormulaEditorCommand</FunctionName>
+                </Action>
+              </Shortcut>
+              <Shortcut resid="PullFml.Shortcut">
+                <Action xsi:type="ExecuteFunction">
+                  <FunctionName>pullFormulaCommand</FunctionName>
+                </Action>
+              </Shortcut>
+              <Shortcut resid="ApplyFml.Shortcut">
+                <Action xsi:type="ExecuteFunction">
+                  <FunctionName>applyFormulaCommand</FunctionName>
+                </Action>
+              </Shortcut>
+            </ExtensionPoint>
+          </DesktopFormFactor>
+        </Host>
+      </Hosts>
+    </VersionOverrides>
   </VersionOverrides>
 </OfficeApp>

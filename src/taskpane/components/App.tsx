@@ -35,6 +35,7 @@ import {
   getShapeEditorRecord,
   getTables,
   insertText,
+  openFormulaEditorPopout,
   moveNamedRange,
   moveShapeToSelection,
   nudgeShape,
@@ -1116,6 +1117,9 @@ const useStyles = makeStyles({
 
 const App: React.FC = () => {
   const styles = useStyles();
+  const isFormulaPopout =
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("popout") === "formula";
   const [primaryTab, setPrimaryTab] = useState<PrimaryTab>("Names");
   const [secondaryTabId, setSecondaryTabId] = useState<string>("ranges");
   const [status, setStatus] = useState<string>("");
@@ -1202,6 +1206,8 @@ const App: React.FC = () => {
   );
   const [customSchemeName, setCustomSchemeName] = useState<string>("My Scheme");
   const [showFormulaLineNumbers, setShowFormulaLineNumbers] = useState<boolean>(true);
+  const [autoCaptureExcelFormula, setAutoCaptureExcelFormula] = useState<boolean>(true);
+  const [autoOpenFormulaTab, setAutoOpenFormulaTab] = useState<boolean>(true);
   const [customFunctionName, setCustomFunctionName] = useState<string>("MyFunction");
   const [customFunctionBody, setCustomFunctionBody] = useState<string>("param1+param2");
   const [customFunctionParams, setCustomFunctionParams] = useState<string[]>(["param1", "param2"]);
@@ -1265,6 +1271,14 @@ const App: React.FC = () => {
     }
     return SANDBOX_TABS;
   }, [primaryTab]);
+
+  useEffect(() => {
+    if (!isFormulaPopout) {
+      return;
+    }
+    setPrimaryTab("Names");
+    setSecondaryTabId("functions");
+  }, [isFormulaPopout]);
 
   useEffect(() => {
     const currentExists = secondaryTabs.some((tab) => tab.id === secondaryTabId);
@@ -2351,18 +2365,83 @@ const App: React.FC = () => {
     }
   };
 
-  const pullActiveCellFormula = async () => {
-    await runAction("Open active cell formula in editor", async () => {
-      const activeCell = await getActiveCellFormulaState();
-      setActiveFormulaPrompt(activeCell);
-      if (!activeCell.hasFormula) {
+  const syncFormulaFromActiveCell = async (requireFormula: boolean): Promise<boolean> => {
+    const activeCell = await getActiveCellFormulaState();
+    setActiveFormulaPrompt(activeCell);
+    if (!activeCell.hasFormula) {
+      if (requireFormula) {
         throw new Error(`Cell ${activeCell.sheet}!${activeCell.address} does not contain a formula.`);
       }
-      setFormulaText(activeCell.formula);
-      setFormulaMode("Formula");
-      setTestFormulaCall(activeCell.formula);
+      return false;
+    }
+    setFormulaMode("Formula");
+    setFormulaText(activeCell.formula);
+    setTestFormulaCall(activeCell.formula);
+    return true;
+  };
+
+  const pullActiveCellFormula = async () => {
+    await runAction("Open active cell formula in editor", async () => {
+      await syncFormulaFromActiveCell(true);
     });
   };
+
+  useEffect(() => {
+    if (!autoCaptureExcelFormula) {
+      return undefined;
+    }
+    let disposed = false;
+    let busy = false;
+    const timerId = window.setInterval(() => {
+      if (disposed || busy) {
+        return;
+      }
+      busy = true;
+      void (async () => {
+        try {
+          const activeCell = await getActiveCellFormulaState();
+          if (disposed) {
+            return;
+          }
+          setActiveFormulaPrompt((prev) => {
+            if (
+              prev &&
+              prev.sheet === activeCell.sheet &&
+              prev.address === activeCell.address &&
+              prev.formula === activeCell.formula &&
+              prev.hasFormula === activeCell.hasFormula
+            ) {
+              return prev;
+            }
+            return activeCell;
+          });
+          if (!activeCell.hasFormula) {
+            return;
+          }
+          const formulaTabOpen = primaryTab === "Names" && secondaryTabId === "functions";
+          if (autoOpenFormulaTab && !formulaTabOpen) {
+            setPrimaryTab("Names");
+            setSecondaryTabId("functions");
+          }
+          const editorHasFocus = document.activeElement === formulaEditorRef.current;
+          if (!editorHasFocus && activeCell.formula !== formulaText) {
+            setFormulaMode("Formula");
+            setFormulaText(activeCell.formula);
+            setTestFormulaCall(activeCell.formula);
+          }
+        } catch {
+          // Ignore sync misses from transient Excel editing states.
+        } finally {
+          busy = false;
+        }
+      })();
+    }, 1100);
+
+    return () => {
+      disposed = true;
+      window.clearInterval(timerId);
+    };
+  }, [autoCaptureExcelFormula, autoOpenFormulaTab, formulaText, primaryTab, secondaryTabId]);
 
   useEffect(() => {
     let disposed = false;
@@ -4692,42 +4771,72 @@ const App: React.FC = () => {
   const renderFunctionsEditor = () => (
     <>
       <div className={styles.sectionCard}>
-        <Text className={styles.sectionTitle}>Formula Bar</Text>
-        <div className={styles.formulaPromptCard}>
-          <Text className={styles.formulaPromptTitle}>Use Workbook Manager Formula Editor</Text>
-          <Text className={styles.formulaPromptText}>
-            If you are editing in Excel&apos;s formula bar, pull that formula into this editor for autocomplete,
-            formatting, and testing.
-          </Text>
-          <Text className={styles.formulaPromptMeta}>
-            {activeFormulaPrompt
-              ? `Active cell: ${activeFormulaPrompt.sheet}!${activeFormulaPrompt.address}`
-              : "Active cell: not captured yet"}
-          </Text>
-          <div className={styles.topActions}>
-            <Button className={styles.miniBtn} onClick={() => void pullActiveCellFormula()}>
-              Open Active Cell Formula
-            </Button>
-            <Button className={styles.miniBtn} onClick={() => void pushFormulaToActiveCell()}>
-              Apply Formula Back to Active Cell
-            </Button>
+        <Text className={styles.sectionTitle}>{isFormulaPopout ? "Formula Editor" : "Formula Bar"}</Text>
+        {!isFormulaPopout ? (
+          <div className={styles.formulaPromptCard}>
+            <Text className={styles.formulaPromptTitle}>Use Workbook Manager Formula Editor</Text>
+            <Text className={styles.formulaPromptText}>
+              If you are editing in Excel&apos;s formula bar, pull that formula into this editor for autocomplete,
+              formatting, and testing.
+            </Text>
+            <Text className={styles.formulaPromptText}>
+              Excel editor bridge: {autoCaptureExcelFormula ? "On" : "Off"} (captures committed formula edits and selection changes).
+            </Text>
+            <Text className={styles.formulaPromptMeta}>
+              {activeFormulaPrompt
+                ? `Active cell: ${activeFormulaPrompt.sheet}!${activeFormulaPrompt.address}`
+                : "Active cell: not captured yet"}
+            </Text>
+            <div className={styles.topActions}>
+              <Button className={styles.miniBtn} onClick={() => void pullActiveCellFormula()}>
+                Open Active Cell Formula
+              </Button>
+              <Button className={styles.miniBtn} onClick={() => void pushFormulaToActiveCell()}>
+                Apply Formula Back to Active Cell
+              </Button>
+              <Button className={styles.miniBtn} onClick={() => void syncFormulaFromActiveCell(true)}>
+                Pull Latest From Excel Editor
+              </Button>
+            </div>
           </div>
-        </div>
+        ) : null}
         <div className={styles.formulaMenuBar}>
-          <Select
-            className={styles.smallSelect}
-            value={formulaMode}
-            onChange={(_, data) => setFormulaMode(data.value as "Formula" | "Function")}
-          >
-            <option value="Formula">Formula</option>
-            <option value="Function">Function (LAMBDA)</option>
-          </Select>
-          <Button className={styles.miniBtn} onClick={() => setFormulaSettingsOpen((prev) => !prev)}>
-            {formulaSettingsOpen ? "Hide Settings" : "Settings"}
-          </Button>
+          {!isFormulaPopout ? (
+            <Select
+              className={styles.smallSelect}
+              value={formulaMode}
+              onChange={(_, data) => setFormulaMode(data.value as "Formula" | "Function")}
+            >
+              <option value="Formula">Formula</option>
+              <option value="Function">Function (LAMBDA)</option>
+            </Select>
+          ) : null}
+          {!isFormulaPopout ? (
+            <Button className={styles.miniBtn} onClick={() => setFormulaSettingsOpen((prev) => !prev)}>
+              {formulaSettingsOpen ? "Hide Settings" : "Settings"}
+            </Button>
+          ) : null}
           <Button className={styles.miniBtn} onClick={() => void executeFormulaEditorCommand("beautifyFormula")}>
             Beautify Formula
           </Button>
+          {isFormulaPopout ? (
+            <>
+              <Button className={styles.miniBtn} onClick={() => void syncFormulaFromActiveCell(true)}>
+                Pull Latest
+              </Button>
+              <Button className={styles.miniBtn} onClick={() => void pushFormulaToActiveCell()}>
+                Apply to Cell
+              </Button>
+            </>
+          ) : null}
+          {!isFormulaPopout ? (
+            <Button
+              className={styles.miniBtn}
+              onClick={() => runAction("Open formula editor popout", openFormulaEditorPopout)}
+            >
+              Pop Out Formula Editor
+            </Button>
+          ) : null}
           <div className={styles.formulaMenuSpacer} />
           <Text className={styles.modalLabel}>
             {contextFunctionDefinition
@@ -4737,7 +4846,7 @@ const App: React.FC = () => {
               : "Context: None"}
           </Text>
         </div>
-        {formulaSettingsOpen ? (
+        {!isFormulaPopout && formulaSettingsOpen ? (
           <div className={styles.settingsPanel}>
             <div className={styles.modalInlineRow}>
               <div className={styles.modalRow}>
@@ -4774,6 +4883,28 @@ const App: React.FC = () => {
                   Show line numbers
                 </label>
               </div>
+              <div className={styles.modalRow}>
+                <Text className={styles.modalLabel}>Excel Editor Bridge</Text>
+                <label className={styles.checkboxRow}>
+                  <input
+                    type="checkbox"
+                    checked={autoCaptureExcelFormula}
+                    onChange={(event) => setAutoCaptureExcelFormula(event.target.checked)}
+                  />
+                  Auto-capture active formula
+                </label>
+                <label className={styles.checkboxRow}>
+                  <input
+                    type="checkbox"
+                    checked={autoOpenFormulaTab}
+                    onChange={(event) => setAutoOpenFormulaTab(event.target.checked)}
+                    disabled={!autoCaptureExcelFormula}
+                  />
+                  Auto-open Formula tab
+                </label>
+              </div>
+            </div>
+            <div className={styles.modalInlineRow}>
               <div className={styles.modalRow}>
                 <Text className={styles.modalLabel}>Custom Scheme Name</Text>
                 <Input
@@ -4822,7 +4953,7 @@ const App: React.FC = () => {
           </div>
         ) : null}
 
-        {formulaMode === "Function" ? (
+        {!isFormulaPopout && formulaMode === "Function" ? (
           <>
             <div className={styles.modalInlineRow}>
               <div className={styles.modalRow}>
@@ -4857,23 +4988,25 @@ const App: React.FC = () => {
           </>
         ) : null}
 
-        <div className={styles.topActions}>
-          <Button className={styles.miniBtn} onClick={() => void addSelectionToFormula()}>
-            Insert Grid Selection
-          </Button>
-          <Button
-            className={styles.miniBtn}
-            onClick={() => {
-              if (formulaMode === "Function") {
-                setFormulaText(generatedLambda.formula);
-                setTestFormulaCall(generatedLambda.invokeExample);
-              }
-            }}
-            disabled={formulaMode !== "Function"}
-          >
-            Build LAMBDA
-          </Button>
-        </div>
+        {!isFormulaPopout ? (
+          <div className={styles.topActions}>
+            <Button className={styles.miniBtn} onClick={() => void addSelectionToFormula()}>
+              Insert Grid Selection
+            </Button>
+            <Button
+              className={styles.miniBtn}
+              onClick={() => {
+                if (formulaMode === "Function") {
+                  setFormulaText(generatedLambda.formula);
+                  setTestFormulaCall(generatedLambda.invokeExample);
+                }
+              }}
+              disabled={formulaMode !== "Function"}
+            >
+              Build LAMBDA
+            </Button>
+          </div>
+        ) : null}
         <div className={styles.formulaEditorWrap}>
           {showFormulaLineNumbers ? (
             <div ref={formulaLineNumbersRef} className={styles.formulaLineNumbers} aria-hidden="true">
@@ -5047,37 +5180,58 @@ const App: React.FC = () => {
         ) : null}
       </div>
 
-      <div className={styles.sectionCard}>
-        <Text className={styles.sectionTitle}>Function Test Runner</Text>
-        <div className={styles.modalRow}>
-          <Text className={styles.modalLabel}>Current Formula / Function Call</Text>
-          <Input value={testFormulaCall} readOnly />
-        </div>
-        <div className={styles.topActions}>
-          <Button className={styles.miniBtn} onClick={() => void runFormulaTest()}>
-            Run Test
-          </Button>
-        </div>
-        {formulaOutput ? (
-          <div className={styles.gridOutputWrap}>
-            <table className={styles.gridOutputTable}>
-              <tbody>
-                {formulaOutput.values.map((row, rowIndex) => (
-                  <tr key={rowIndex}>
-                    {row.map((cell, colIndex) => (
-                      <td key={`${rowIndex}-${colIndex}`} className={styles.gridOutputCell}>
-                        {cell === null ? "" : String(cell)}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      {!isFormulaPopout ? (
+        <div className={styles.sectionCard}>
+          <Text className={styles.sectionTitle}>Function Test Runner</Text>
+          <div className={styles.modalRow}>
+            <Text className={styles.modalLabel}>Current Formula / Function Call</Text>
+            <Input value={testFormulaCall} readOnly />
           </div>
-        ) : null}
-      </div>
+          <div className={styles.topActions}>
+            <Button className={styles.miniBtn} onClick={() => void runFormulaTest()}>
+              Run Test
+            </Button>
+          </div>
+          {formulaOutput ? (
+            <div className={styles.gridOutputWrap}>
+              <table className={styles.gridOutputTable}>
+                <tbody>
+                  {formulaOutput.values.map((row, rowIndex) => (
+                    <tr key={rowIndex}>
+                      {row.map((cell, colIndex) => (
+                        <td key={`${rowIndex}-${colIndex}`} className={styles.gridOutputCell}>
+                          {cell === null ? "" : String(cell)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </>
   );
+
+  if (isFormulaPopout) {
+    return (
+      <div className={styles.root}>
+        <div className={styles.frame}>
+          <div className={styles.content}>
+            {renderFunctionsEditor()}
+            {status ? (
+              <div className={styles.status}>
+                <Text className={statusType === "success" ? styles.statusSuccess : styles.statusError}>
+                  {status}
+                </Text>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={styles.root}>

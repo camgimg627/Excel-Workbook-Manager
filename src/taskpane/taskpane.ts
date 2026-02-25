@@ -116,6 +116,7 @@ export interface ShapeEditorRecord {
 
 const NO_FILL_COLOR_TOKEN = "__NO_FILL__";
 const SHAPE_ANCHOR_PREFIX = "WBM_ANCHOR=";
+let formulaEditorDialog: Office.Dialog | null = null;
 
 async function runFormattingCommand(command: (context: Excel.RequestContext) => Promise<void>) {
   await Excel.run(async (context) => {
@@ -1112,5 +1113,35 @@ export async function applyFormulaToShapeAnchorCell(
       computed === null || computed === undefined ? "" : String(computed);
 
     await context.sync();
+  });
+}
+
+export async function openFormulaEditorPopout(): Promise<void> {
+  const url = `${window.location.origin}/taskpane.html?popout=formula`;
+  if (formulaEditorDialog) {
+    try {
+      formulaEditorDialog.close();
+    } catch {
+      // Ignore close errors.
+    }
+    formulaEditorDialog = null;
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    Office.context.ui.displayDialogAsync(
+      url,
+      { height: 85, width: 60, displayInIframe: false },
+      (result) => {
+        if (result.status !== Office.AsyncResultStatus.Succeeded) {
+          reject(result.error);
+          return;
+        }
+        formulaEditorDialog = result.value;
+        formulaEditorDialog.addEventHandler(Office.EventType.DialogEventReceived, () => {
+          formulaEditorDialog = null;
+        });
+        resolve();
+      }
+    );
   });
 }
