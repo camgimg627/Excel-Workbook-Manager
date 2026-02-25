@@ -682,6 +682,8 @@ export async function getTables(): Promise<TableRecord[]> {
       });
     });
 
+    await syncWorkbookTablesNamedRange(context, records);
+
     return records;
   });
 }
@@ -690,8 +692,75 @@ export async function updateTableName(sheetName: string, oldName: string, newNam
   await Excel.run(async (context) => {
     const table = context.workbook.worksheets.getItem(sheetName).tables.getItem(oldName);
     table.name = newName;
+
+    const worksheets = context.workbook.worksheets;
+    worksheets.load("items/name");
+    await context.sync();
+
+    const tableMaps = worksheets.items.map((sheet) => {
+      const tables = sheet.tables;
+      tables.load("items/name");
+      return { sheetName: sheet.name, tables };
+    });
+    await context.sync();
+
+    const records: TableRecord[] = [];
+    tableMaps.forEach((tableMap) => {
+      tableMap.tables.items.forEach((item) => {
+        records.push({
+          id: `${tableMap.sheetName}::${item.name}`,
+          name: item.name,
+          address: "",
+          sheet: tableMap.sheetName,
+          scope: "Worksheet",
+        });
+      });
+    });
+    await syncWorkbookTablesNamedRange(context, records);
+
     await context.sync();
   });
+}
+
+async function syncWorkbookTablesNamedRange(context: Excel.RequestContext, tables: TableRecord[]) {
+  const metaSheetName = "__WBM_META";
+  const metaSheetOrNull = context.workbook.worksheets.getItemOrNullObject(metaSheetName);
+  metaSheetOrNull.load("name");
+  await context.sync();
+
+  const metaSheet = metaSheetOrNull.isNullObject
+    ? context.workbook.worksheets.add(metaSheetName)
+    : (metaSheetOrNull as Excel.Worksheet);
+  metaSheet.visibility = Excel.SheetVisibility.hidden;
+
+  const column = metaSheet.getRange("A:A");
+  column.clear(Excel.ClearApplyTo.contents);
+
+  const sortedNames = tables
+    .map((table) => table.name.trim())
+    .filter((name) => name.length > 0)
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+
+  if (sortedNames.length > 0) {
+    const values = sortedNames.map((name) => [name]);
+    const target = metaSheet.getRangeByIndexes(0, 0, values.length, 1);
+    target.values = values;
+  } else {
+    metaSheet.getRange("A1").values = [[""]];
+  }
+
+  const wbTablesName = context.workbook.names.getItemOrNullObject("wb_Tables");
+  wbTablesName.load("name");
+  await context.sync();
+
+  const targetAddress = sortedNames.length > 0 ? `=$A$1:$A$${sortedNames.length}` : "=$A$1";
+  const formula = `=${quoteSheetName(metaSheetName)}!${targetAddress.slice(1)}`;
+
+  if (wbTablesName.isNullObject) {
+    context.workbook.names.add("wb_Tables", formula);
+  } else {
+    wbTablesName.formula = formula;
+  }
 }
 
 export async function evaluateFormula(formulaText: string): Promise<FormulaEvaluationResult> {
