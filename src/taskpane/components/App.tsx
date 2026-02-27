@@ -390,6 +390,9 @@ const EXCEL_FUNCTION_NAMES = [
 
 const useStyles = makeStyles({
   root: {
+    display: "flex",
+    flexDirection: "column",
+    gap: tokens.spacingVerticalL,
     minHeight: "100vh",
     backgroundColor: "#efefef",
     color: "#1f1f1f",
