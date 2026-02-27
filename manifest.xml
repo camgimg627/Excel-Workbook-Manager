@@ -50,8 +50,22 @@
                     <bt:Image size="80" resid="Icon.80x80"/>
                   </Icon>
                   <Action xsi:type="ShowTaskpane">
-                    <TaskpaneId>ButtonId1</TaskpaneId>
                     <SourceLocation resid="Taskpane.Url"/>
+                  </Action>
+                </Control>
+                <Control xsi:type="Button" id="CreateNameButton">
+                  <Label resid="CreateNameButton.Label"/>
+                  <Supertip>
+                    <Title resid="CreateNameButton.Label"/>
+                    <Description resid="CreateNameButton.Tooltip"/>
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="Icon.16x16"/>
+                    <bt:Image size="32" resid="Icon.32x32"/>
+                    <bt:Image size="80" resid="Icon.80x80"/>
+                  </Icon>
+                  <Action xsi:type="ExecuteFunction">
+                    <FunctionName>createNameCommand</FunctionName>
                   </Action>
                 </Control>
               </Group>
@@ -171,9 +185,8 @@
                     <bt:Image size="32" resid="Icon.32x32"/>
                     <bt:Image size="80" resid="Icon.80x80"/>
                   </Icon>
-                  <Action xsi:type="ShowTaskpane">
-                    <TaskpaneId>ButtonId1</TaskpaneId>
-                    <SourceLocation resid="Taskpane.Url"/>
+                  <Action xsi:type="ExecuteFunction">
+                    <FunctionName>openFormattingCommand</FunctionName>
                   </Action>
                 </Control>
               </Group>
@@ -195,19 +208,10 @@
                     <bt:Image size="32" resid="Icon.32x32"/>
                     <bt:Image size="80" resid="Icon.80x80"/>
                   </Icon>
-                  <Action xsi:type="ShowTaskpane">
-                    <TaskpaneId>ButtonId1</TaskpaneId>
-                    <SourceLocation resid="Taskpane.Url"/>
+                  <Action xsi:type="ExecuteFunction">
+                    <FunctionName>openSettingsCommand</FunctionName>
                   </Action>
                 </Control>
-              </Group>
-              <Group id="HelpGroup">
-                <Label resid="HelpGroup.Label"/>
-                <Icon>
-                  <bt:Image size="16" resid="Icon.16x16"/>
-                  <bt:Image size="32" resid="Icon.32x32"/>
-                  <bt:Image size="80" resid="Icon.80x80"/>
-                </Icon>
                 <Control xsi:type="Button" id="OpenHelpButton">
                   <Label resid="OpenHelpButton.Label"/>
                   <Supertip>
@@ -219,9 +223,8 @@
                     <bt:Image size="32" resid="Icon.32x32"/>
                     <bt:Image size="80" resid="Icon.80x80"/>
                   </Icon>
-                  <Action xsi:type="ShowTaskpane">
-                    <TaskpaneId>ButtonId1</TaskpaneId>
-                    <SourceLocation resid="Taskpane.Url"/>
+                  <Action xsi:type="ExecuteFunction">
+                    <FunctionName>openHelpCommand</FunctionName>
                   </Action>
                 </Control>
               </Group>
@@ -248,9 +251,9 @@
         <bt:String id="NamesGroup.Label" DefaultValue="Names"/>
         <bt:String id="FormulasGroup.Label" DefaultValue="Formulas"/>
         <bt:String id="FormattingGroup.Label" DefaultValue="Formatting"/>
-        <bt:String id="SettingsGroup.Label" DefaultValue="Settings"/>
-        <bt:String id="HelpGroup.Label" DefaultValue="Help"/>
-        <bt:String id="TaskpaneButton.Label" DefaultValue="Open Names"/>
+        <bt:String id="SettingsGroup.Label" DefaultValue="Settings &amp; Help"/>
+        <bt:String id="TaskpaneButton.Label" DefaultValue="Manage Names"/>
+        <bt:String id="CreateNameButton.Label" DefaultValue="Create Name"/>
         <bt:String id="OpenFormulaEditorButton.Label" DefaultValue="Open Formula Editor"/>
         <bt:String id="OAPFormulaBtn.Label" DefaultValue="Edit Active Formula"/>
         <bt:String id="PullFormulaButton.Label" DefaultValue="Pull Formula"/>
@@ -266,7 +269,8 @@
       </bt:ShortStrings>
       <bt:LongStrings>
         <bt:String id="GetStarted.Description" DefaultValue="Your sample add-in loaded successfully. Go to the HOME tab and click the 'Show Task Pane' button to get started."/>
-        <bt:String id="TaskpaneButton.Tooltip" DefaultValue="Open Workbook Manager to the Names section."/>
+        <bt:String id="TaskpaneButton.Tooltip" DefaultValue="Open Workbook Manager to manage named ranges."/>
+        <bt:String id="CreateNameButton.Tooltip" DefaultValue="Open Workbook Manager and start creating a new name."/>
         <bt:String id="OpenFormulaEditorButton.Tooltip" DefaultValue="Open Workbook Manager directly in Formula Editor."/>
         <bt:String id="OAPFormulaBtn.Tooltip" DefaultValue="Open Workbook Manager Formula Editor and pull the active cell formula immediately."/>
         <bt:String id="PullFormulaButton.Tooltip" DefaultValue="Pull the active cell formula into the Workbook Manager Formula Editor."/>
@@ -317,8 +321,22 @@
                       <bt:Image size="80" resid="Icon.80x80"/>
                     </Icon>
                     <Action xsi:type="ShowTaskpane">
-                      <TaskpaneId>ButtonId1</TaskpaneId>
                       <SourceLocation resid="Taskpane.Url"/>
+                    </Action>
+                  </Control>
+                  <Control xsi:type="Button" id="CreateNameButton">
+                    <Label resid="CreateNameButton.Label"/>
+                    <Supertip>
+                      <Title resid="CreateNameButton.Label"/>
+                      <Description resid="CreateNameButton.Tooltip"/>
+                    </Supertip>
+                    <Icon>
+                      <bt:Image size="16" resid="Icon.16x16"/>
+                      <bt:Image size="32" resid="Icon.32x32"/>
+                      <bt:Image size="80" resid="Icon.80x80"/>
+                    </Icon>
+                    <Action xsi:type="ExecuteFunction">
+                      <FunctionName>createNameCommand</FunctionName>
                     </Action>
                   </Control>
                 </Group>
@@ -438,9 +456,8 @@
                       <bt:Image size="32" resid="Icon.32x32"/>
                       <bt:Image size="80" resid="Icon.80x80"/>
                     </Icon>
-                    <Action xsi:type="ShowTaskpane">
-                      <TaskpaneId>ButtonId1</TaskpaneId>
-                      <SourceLocation resid="Taskpane.Url"/>
+                    <Action xsi:type="ExecuteFunction">
+                      <FunctionName>openFormattingCommand</FunctionName>
                     </Action>
                   </Control>
                 </Group>
@@ -462,19 +479,10 @@
                       <bt:Image size="32" resid="Icon.32x32"/>
                       <bt:Image size="80" resid="Icon.80x80"/>
                     </Icon>
-                    <Action xsi:type="ShowTaskpane">
-                      <TaskpaneId>ButtonId1</TaskpaneId>
-                      <SourceLocation resid="Taskpane.Url"/>
+                    <Action xsi:type="ExecuteFunction">
+                      <FunctionName>openSettingsCommand</FunctionName>
                     </Action>
                   </Control>
-                </Group>
-                <Group id="HelpGroup">
-                  <Label resid="HelpGroup.Label"/>
-                  <Icon>
-                    <bt:Image size="16" resid="Icon.16x16"/>
-                    <bt:Image size="32" resid="Icon.32x32"/>
-                    <bt:Image size="80" resid="Icon.80x80"/>
-                  </Icon>
                   <Control xsi:type="Button" id="OpenHelpButton">
                     <Label resid="OpenHelpButton.Label"/>
                     <Supertip>
@@ -486,9 +494,8 @@
                       <bt:Image size="32" resid="Icon.32x32"/>
                       <bt:Image size="80" resid="Icon.80x80"/>
                     </Icon>
-                    <Action xsi:type="ShowTaskpane">
-                      <TaskpaneId>ButtonId1</TaskpaneId>
-                      <SourceLocation resid="Taskpane.Url"/>
+                    <Action xsi:type="ExecuteFunction">
+                      <FunctionName>openHelpCommand</FunctionName>
                     </Action>
                   </Control>
                 </Group>

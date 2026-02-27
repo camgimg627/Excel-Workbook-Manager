@@ -116,7 +116,24 @@ export interface ShapeEditorRecord {
 
 const NO_FILL_COLOR_TOKEN = "__NO_FILL__";
 const SHAPE_ANCHOR_PREFIX = "WBM_ANCHOR=";
+const FORMULA_DIALOG_RPC_CHANNEL = "wbm-formula-dialog-rpc";
 let formulaEditorDialog: Office.Dialog | null = null;
+
+interface FormulaDialogEvalRequestMessage {
+  channel: typeof FORMULA_DIALOG_RPC_CHANNEL;
+  type: "eval-request";
+  requestId: string;
+  formula: string;
+}
+
+interface FormulaDialogEvalResponseMessage {
+  channel: typeof FORMULA_DIALOG_RPC_CHANNEL;
+  type: "eval-response";
+  requestId: string;
+  ok: boolean;
+  result?: FormulaEvaluationResult;
+  error?: string;
+}
 
 async function runFormattingCommand(command: (context: Excel.RequestContext) => Promise<void>) {
   await Excel.run(async (context) => {
@@ -688,6 +705,36 @@ export async function getTables(): Promise<TableRecord[]> {
   });
 }
 
+export async function saveNamedFunction(name: string, lambdaFormula: string) {
+  const trimmedName = name.trim();
+  if (!trimmedName) {
+    throw new Error("Function name is required.");
+  }
+
+  const normalized = lambdaFormula.trim();
+  if (!normalized) {
+    throw new Error("Formula is required.");
+  }
+
+  const formula = normalized.startsWith("=") ? normalized : `=${normalized}`;
+  if (!/^=\s*LAMBDA\s*\(/i.test(formula)) {
+    throw new Error("Named Function must use a LAMBDA formula.");
+  }
+
+  await Excel.run(async (context) => {
+    const existing = context.workbook.names.getItemOrNullObject(trimmedName);
+    existing.load("name");
+    await context.sync();
+
+    if (existing.isNullObject) {
+      context.workbook.names.add(trimmedName, formula);
+    } else {
+      existing.formula = formula;
+    }
+    await context.sync();
+  });
+}
+
 export async function updateTableName(sheetName: string, oldName: string, newName: string) {
   await Excel.run(async (context) => {
     const table = context.workbook.worksheets.getItem(sheetName).tables.getItem(oldName);
@@ -1205,10 +1252,72 @@ export async function openFormulaEditorPopout(): Promise<void> {
           reject(result.error);
           return;
         }
-        formulaEditorDialog = result.value;
-        formulaEditorDialog.addEventHandler(Office.EventType.DialogEventReceived, () => {
-          formulaEditorDialog = null;
+        const dialog = result.value;
+        formulaEditorDialog = dialog;
+        dialog.addEventHandler(Office.EventType.DialogEventReceived, () => {
+          if (formulaEditorDialog === dialog) {
+            formulaEditorDialog = null;
+          }
         });
+        dialog.addEventHandler(
+          Office.EventType.DialogMessageReceived,
+          (args: { message: string; origin: string } | { error: number }) => {
+            if (!("message" in args)) {
+              return;
+            }
+            let payload: unknown;
+            try {
+              payload = JSON.parse(args.message);
+            } catch {
+              return;
+            }
+
+            if (!payload || typeof payload !== "object") {
+              return;
+            }
+
+            const data = payload as Partial<FormulaDialogEvalRequestMessage>;
+            if (
+              data.channel !== FORMULA_DIALOG_RPC_CHANNEL ||
+              data.type !== "eval-request" ||
+              typeof data.requestId !== "string" ||
+              typeof data.formula !== "string"
+            ) {
+              return;
+            }
+
+            void (async () => {
+              try {
+                const evalResult = await evaluateFormula(data.formula);
+                const response: FormulaDialogEvalResponseMessage = {
+                  channel: FORMULA_DIALOG_RPC_CHANNEL,
+                  type: "eval-response",
+                  requestId: data.requestId,
+                  ok: true,
+                  result: evalResult,
+                };
+                try {
+                  dialog.messageChild(JSON.stringify(response));
+                } catch {
+                  // Dialog may have been closed before response dispatch.
+                }
+              } catch (error) {
+                const response: FormulaDialogEvalResponseMessage = {
+                  channel: FORMULA_DIALOG_RPC_CHANNEL,
+                  type: "eval-response",
+                  requestId: data.requestId,
+                  ok: false,
+                  error: error instanceof Error ? error.message : String(error),
+                };
+                try {
+                  dialog.messageChild(JSON.stringify(response));
+                } catch {
+                  // Dialog may have been closed before response dispatch.
+                }
+              }
+            })();
+          }
+        );
         resolve();
       }
     );
