@@ -380,6 +380,9 @@ function inferInsertableShapeType(
   textAsGeometry?: string | null
 ): InsertableShapeType {
   const normalized = (geometricType ?? textAsGeometry ?? "").toLowerCase();
+  if (normalized.includes("textbox") || normalized.includes("text box")) {
+    return "TextBox";
+  }
   if (normalized.includes("round")) {
     return "RoundedRectangle";
   }
@@ -1528,6 +1531,10 @@ function loadShapeBuilderProperties(shape: Excel.Shape): void {
   );
 }
 
+function isShapeBuilderEditableShapeType(shapeType: string): boolean {
+  return shapeType === "GeometricShape" || shapeType === "TextBox";
+}
+
 function buildShapeBuilderRecord(sheetName: string, shape: Excel.Shape): ShapeBuilderShapeRecord {
   const metadata = parseShapeBuilderMetadata(
     asString(shape.altTextTitle),
@@ -1540,7 +1547,7 @@ function buildShapeBuilderRecord(sheetName: string, shape: Excel.Shape): ShapeBu
     id: `${sheetName}::${shape.name}`,
     sheetName,
     shapeName: shape.name,
-    shapeType: inferInsertableShapeType(asString(shape.geometricShapeType)),
+    shapeType: inferInsertableShapeType(asString(shape.geometricShapeType), asString(shape.type)),
     text,
     iconKey: metadata.iconKey,
     fillColor: sanitizeHexColor(asString(shape.fill.foregroundColor), "#A8D5AD"),
@@ -1569,22 +1576,18 @@ export async function listShapeBuilderShapes(): Promise<ShapeBuilderShapeRecord[
     shapes.load("items/name,items/type,items/altTextTitle");
     await context.sync();
 
-    const candidateShapes = shapes.items.filter((shape) => {
-      const title = asString(shape.altTextTitle);
-      if (title.startsWith(SHAPE_BUILDER_META_PREFIX) || shape.name.startsWith(NAV_SHAPE_PREFIX)) {
-        return true;
-      }
-      return shape.type === "GeometricShape" || shape.type === "Image" || shape.type === "Line";
-    });
+    const candidateShapes = shapes.items.filter(
+      (shape) =>
+        isShapeBuilderEditableShapeType(asString(shape.type)) &&
+        !shape.name.startsWith(NAV_PANEL_PREFIX)
+    );
 
     candidateShapes.forEach((shape) => {
       loadShapeBuilderProperties(shape);
     });
     await context.sync();
 
-    const records = candidateShapes
-      .filter((shape) => !shape.name.startsWith(NAV_PANEL_PREFIX))
-      .map((shape) => buildShapeBuilderRecord(sheet.name, shape));
+    const records = candidateShapes.map((shape) => buildShapeBuilderRecord(sheet.name, shape));
     records.sort((left, right) => left.top - right.top || left.left - right.left || left.shapeName.localeCompare(right.shapeName));
     return records;
   });

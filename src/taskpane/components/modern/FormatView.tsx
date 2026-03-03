@@ -201,6 +201,27 @@ const styles = makeStyles({
   iconActive: { border: "1px solid #7EA5E1", backgroundColor: "#EFF4FE" },
   radioRow: { display: "grid", gap: "8px" },
   horizontal: { display: "flex", gap: "8px", flexWrap: "wrap" },
+  buttonGrid2: { display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: "8px" },
+  sectionHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px", flexWrap: "wrap" },
+  sectionTitleWrap: { display: "grid", gap: "2px" },
+  helperCard: {
+    borderRadius: "10px",
+    border: `1px solid ${MODERN_TOKENS.colorBorder}`,
+    backgroundColor: "#F8FAFC",
+    padding: "10px",
+    display: "grid",
+    gap: "8px",
+  },
+  radioCard: {
+    borderRadius: "8px",
+    border: `1px solid ${MODERN_TOKENS.colorBorder}`,
+    backgroundColor: "#FFFFFF",
+    padding: "8px 10px",
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+  },
+  utilityGrid: { display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: "8px" },
   formatRow: { borderRadius: "8px", border: `1px solid ${MODERN_TOKENS.colorBorder}`, padding: "8px 10px", display: "grid", gridTemplateColumns: "1fr auto", gap: "8px", alignItems: "center" },
   empty: { borderRadius: "8px", border: `1px dashed ${MODERN_TOKENS.colorBorder}`, padding: "12px", color: MODERN_TOKENS.colorTextMuted, fontSize: "12px" },
 });
@@ -242,18 +263,49 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
   const refreshAll = useCallback(async () => {
     setBusy(true);
     try {
-      const [shapeRecords, destinationOptions, formatRecords] = await Promise.all([
-        listShapeBuilderShapes(),
-        listNavigationDestinations(),
-        listSheetFormats(),
+      const settle = <T,>(promise: Promise<T>) =>
+        promise.then(
+          (value): { status: "fulfilled"; value: T } => ({ status: "fulfilled", value }),
+          (reason): { status: "rejected"; reason: unknown } => ({ status: "rejected", reason })
+        );
+      const [shapeResult, destinationResult, formatResult] = await Promise.all([
+        settle(listShapeBuilderShapes()),
+        settle(listNavigationDestinations()),
+        settle(listSheetFormats()),
       ]);
-      setShapes(shapeRecords);
-      setDestinations(destinationOptions);
-      setFormats(formatRecords);
-      setSelectedShapeId((prev) => (shapeRecords.some((x) => x.id === prev) ? prev : shapeRecords[0]?.id ?? ""));
-      setSelectedFormatId((prev) => (formatRecords.some((x) => x.id === prev) ? prev : formatRecords[0]?.id ?? ""));
-    } catch (error) {
-      setErr(error);
+      const failures: string[] = [];
+
+      if (shapeResult.status === "fulfilled") {
+        const shapeRecords = shapeResult.value;
+        setShapes(shapeRecords);
+        setSelectedShapeId((prev) => (shapeRecords.some((x) => x.id === prev) ? prev : shapeRecords[0]?.id ?? ""));
+      } else {
+        setShapes([]);
+        setSelectedShapeId("");
+        failures.push(`Shapes: ${normalizeError(shapeResult.reason)}`);
+      }
+
+      if (destinationResult.status === "fulfilled") {
+        setDestinations(destinationResult.value);
+      } else {
+        setDestinations([]);
+        failures.push(`Destinations: ${normalizeError(destinationResult.reason)}`);
+      }
+
+      if (formatResult.status === "fulfilled") {
+        const formatRecords = formatResult.value;
+        setFormats(formatRecords);
+        setSelectedFormatId((prev) => (formatRecords.some((x) => x.id === prev) ? prev : formatRecords[0]?.id ?? ""));
+      } else {
+        setFormats([]);
+        setSelectedFormatId("");
+        failures.push(`Formats: ${normalizeError(formatResult.reason)}`);
+      }
+
+      if (failures.length > 0) {
+        setStatusType("error");
+        setStatus(failures.join(" | "));
+      }
     } finally {
       setBusy(false);
     }
@@ -287,28 +339,18 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
   useEffect(() => {
     let disposed = false;
 
-    const linkedShapes = shapes.filter((shape) => {
-      if (shape.linkType === "Internal") {
-        return Boolean(shape.internalDestinationId);
-      }
-      if (shape.linkType === "External") {
-        return Boolean(shape.externalUrl);
-      }
-      return false;
-    });
-
     const registerHandlers = async () => {
       if (typeof Excel === "undefined") {
         return;
       }
       clearShapeHandlers();
-      if (!linkedShapes.length) {
+      if (!shapes.length) {
         return;
       }
 
       try {
         await Excel.run(async (context) => {
-          for (const shapeRecord of linkedShapes) {
+          for (const shapeRecord of shapes) {
             const sheet = context.workbook.worksheets.getItem(shapeRecord.sheetName);
             const shape = sheet.shapes.getItemOrNullObject(shapeRecord.shapeName);
             shape.load("name");
@@ -323,6 +365,14 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
                 : shapeRecord.internalDestinationId;
             const handler = await shape.onActivated.add(async () => {
               if (disposed) {
+                return;
+              }
+              setSelectedShapeId(shapeRecord.id);
+              if (
+                (shapeRecord.linkType === "Internal" && !shapeRecord.internalDestinationId) ||
+                (shapeRecord.linkType === "External" && !shapeRecord.externalUrl) ||
+                shapeRecord.linkType === "None"
+              ) {
                 return;
               }
               try {
@@ -656,17 +706,32 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
       </div>
 
       <div className={s.card}>
-        <div className={s.row}><Text className={s.title}>Template Quick Start</Text><Text className={s.muted}>Vertical and Horizontal</Text></div>
-        <label><input type="checkbox" checked={applyTemplateAll} onChange={(event) => setApplyTemplateAll(event.target.checked)} /> Apply to all sheets</label>
-        <div className={s.horizontal}>
-          <button className={s.smallBtn} type="button" onClick={() => void applyTemplate("Vertical")}>Apply Vertical Template</button>
-          <button className={s.smallBtn} type="button" onClick={() => void applyTemplate("Horizontal")}>Apply Horizontal Template</button>
+        <div className={s.sectionHeader}>
+          <div className={s.sectionTitleWrap}>
+            <Text className={s.title}>Template Quick Start</Text>
+            <Text className={s.muted}>Mirror the new Add Shape workflow with one-click nav layout presets.</Text>
+          </div>
+        </div>
+        <div className={s.helperCard}>
+          <label className={s.radioCard}>
+            <input type="checkbox" checked={applyTemplateAll} onChange={(event) => setApplyTemplateAll(event.target.checked)} />
+            <span>Apply template to all sheets</span>
+          </label>
+          <div className={s.buttonGrid2}>
+            <button className={s.smallBtn} type="button" onClick={() => void applyTemplate("Vertical")}>Apply Vertical Template</button>
+            <button className={s.smallBtn} type="button" onClick={() => void applyTemplate("Horizontal")}>Apply Horizontal Template</button>
+          </div>
         </div>
       </div>
 
       <div className={s.card}>
-        <div className={s.row}><Text className={s.title}>Sheet Format Templates</Text><Text className={s.muted}>Full-sheet capture and apply</Text></div>
-        <div className={s.horizontal}>
+        <div className={s.sectionHeader}>
+          <div className={s.sectionTitleWrap}>
+            <Text className={s.title}>Sheet Format Templates</Text>
+            <Text className={s.muted}>Capture once, then reapply the same sheet design everywhere.</Text>
+          </div>
+        </div>
+        <div className={s.helperCard}>
           <Input value={newFormatName} placeholder="Template name" onChange={(_, data) => setNewFormatName(data.value)} />
           <Button appearance="primary" onClick={() => void captureFormat()}>Capture Active Sheet</Button>
           <button
@@ -691,7 +756,7 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
             Recapture
           </button>
         </div>
-        <div className={s.horizontal}>
+        <div className={s.buttonGrid2}>
           <button
             className={s.smallBtn}
             type="button"
@@ -767,20 +832,28 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
       </div>
 
       <div className={s.card}>
-        <div className={s.row}><Text className={s.title}>Formatting Utilities</Text><Text className={s.muted}>Current workbook helpers</Text></div>
-        <div className={s.horizontal}>
+        <div className={s.sectionHeader}>
+          <div className={s.sectionTitleWrap}>
+            <Text className={s.title}>Formatting Utilities</Text>
+            <Text className={s.muted}>Fast formatting actions for the active workbook.</Text>
+          </div>
+        </div>
+        <div className={s.utilityGrid}>
           <button className={s.smallBtn} type="button" onClick={() => void toggleGridlines()}>Toggle Gridlines</button>
           <button className={s.smallBtn} type="button" onClick={() => void freezeTopRow()}>Freeze Top Row</button>
           <button className={s.smallBtn} type="button" onClick={() => void freezeFirstColumn()}>Freeze First Column</button>
           <button className={s.smallBtn} type="button" onClick={() => void unfreezePanes()}>Unfreeze</button>
           <button className={s.smallBtn} type="button" onClick={() => void refreshPivotTables()}>Refresh Pivots</button>
         </div>
-        <div className={s.horizontal}>
+        <div className={s.helperCard}>
+          <Text className={s.label}>Apply Cell Style Presets</Text>
+          <div className={s.buttonGrid2}>
           {STYLE_PRESETS.map((preset) => (
             <button key={preset.preset} className={s.smallBtn} type="button" onClick={() => void applyCellStylePreset(preset.preset)}>
               {preset.label}
             </button>
           ))}
+          </div>
         </div>
       </div>
     </div>
