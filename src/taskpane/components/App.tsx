@@ -4,6 +4,7 @@ import { Button, makeStyles } from "@fluentui/react-components";
 import LegacyApp from "./LegacyApp";
 import ModernShell from "./modern/ModernShell";
 import FormulaMonacoView, { FormulaViewHandle } from "./modern/FormulaMonacoView";
+import FormatView from "./modern/FormatView";
 import { NAVIGATION_SIGNAL_KEY, NavigationTarget, isNavigationTarget } from "../navigation";
 
 /* global Office, OfficeRuntime */
@@ -73,7 +74,9 @@ const clearDocumentSignal = async (key: string): Promise<void> => {
 
 const App: React.FC = () => {
   const styles = useStyles();
-  const isFormulaPopout = getQueryParam("popout") === "formula";
+  const popoutMode = getQueryParam("popout");
+  const isFormulaPopout = popoutMode === "formula";
+  const isFormatPopout = popoutMode === "format";
   const [uiMode, setUiMode] = useState<UiMode>(getInitialMode());
   const [activeTarget, setActiveTarget] = useState<NavigationTarget>("names");
   const [createRequestId, setCreateRequestId] = useState<number>(0);
@@ -216,13 +219,24 @@ const App: React.FC = () => {
     if (isFormulaPopout) {
       return "formulas";
     }
+    if (isFormatPopout) {
+      return "format";
+    }
     return activeTarget;
-  }, [activeTarget, isFormulaPopout]);
+  }, [activeTarget, isFormatPopout, isFormulaPopout]);
 
   if (isFormulaPopout && uiMode === "modern") {
     return (
       <div className={styles.root}>
         <FormulaMonacoView ref={formulaViewRef} isPopout onOpenLegacy={() => setUiMode("legacy")} />
+      </div>
+    );
+  }
+
+  if (isFormatPopout && uiMode === "modern") {
+    return (
+      <div className={styles.root}>
+        <FormatView isPopout onOpenLegacy={() => setUiMode("legacy")} />
       </div>
     );
   }
