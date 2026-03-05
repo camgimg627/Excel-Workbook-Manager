@@ -230,14 +230,53 @@ export interface ShapeEditorRecord {
   lockAspectRatio: boolean;
 }
 
-const NO_FILL_COLOR_TOKEN = "__NO_FILL__";
+export const NO_FILL_COLOR_TOKEN = "__NO_FILL__";
 const SHAPE_ANCHOR_PREFIX = "WBM_ANCHOR=";
 const SHEET_FORMAT_STORE_SHEET = "__WBM_SHEET_FORMATS";
 const SHEET_FORMAT_TEMPLATE_PREFIX = "__WBM_FMT_";
 const NAV_SHAPE_PREFIX = "WBM_NAV_SHAPE_";
+const NAV_SHADOW_PREFIX = "WBM_NAV_SHADOW_";
 const NAV_PANEL_PREFIX = "WBM_NAV_PANEL_";
 const NAV_TARGET_PREFIX = "WBM_NAV_TARGET=";
 const SHAPE_BUILDER_META_PREFIX = "WBM_SHAPE_BUILDER_META=";
+const WORKBOOK_THEME_SWATCH_FALLBACK = [
+  "#4472C4",
+  "#ED7D31",
+  "#A5A5A5",
+  "#FFC000",
+  "#5B9BD5",
+  "#70AD47",
+  "#264478",
+  "#9E480E",
+  "#636363",
+  "#997300",
+];
+const WORKBOOK_THEME_STYLE_SEQUENCE = [
+  "Accent1",
+  "Accent2",
+  "Accent3",
+  "Accent4",
+  "Accent5",
+  "Accent6",
+  "Accent1_20",
+  "Accent2_20",
+  "Accent3_20",
+  "Accent4_20",
+  "Accent5_20",
+  "Accent6_20",
+  "Accent1_40",
+  "Accent2_40",
+  "Accent3_40",
+  "Accent4_40",
+  "Accent5_40",
+  "Accent6_40",
+  "Accent1_60",
+  "Accent2_60",
+  "Accent3_60",
+  "Accent4_60",
+  "Accent5_60",
+  "Accent6_60",
+];
 const FORMULA_DIALOG_RPC_CHANNEL = "wbm-formula-dialog-rpc";
 let formulaEditorDialog: Office.Dialog | null = null;
 let formatEditorDialog: Office.Dialog | null = null;
@@ -1407,6 +1446,82 @@ function sanitizeHexColor(value: string, fallback: string): string {
   return /^#[0-9a-f]{6}$/i.test(value) ? value.toUpperCase() : fallback;
 }
 
+function isNoFillColor(value: string): boolean {
+  return value.trim().toUpperCase() === NO_FILL_COLOR_TOKEN;
+}
+
+function normalizeShapeBuilderFillColor(value: string, fallback: string): string {
+  if (isNoFillColor(value)) {
+    return NO_FILL_COLOR_TOKEN;
+  }
+  const normalizedFallback = isNoFillColor(fallback) ? "#A8D5AD" : sanitizeHexColor(fallback, "#A8D5AD");
+  return sanitizeHexColor(value, normalizedFallback);
+}
+
+function applyShapeBuilderFill(shape: Excel.Shape, fillColor: string, fallback: string): string {
+  const normalized = normalizeShapeBuilderFillColor(fillColor, fallback);
+  if (normalized === NO_FILL_COLOR_TOKEN) {
+    shape.fill.clear();
+  } else {
+    shape.fill.setSolidColor(normalized);
+  }
+  return normalized;
+}
+
+function getShapeBuilderShadowName(shapeName: string): string {
+  return `${NAV_SHADOW_PREFIX}${shapeName}`;
+}
+
+async function syncShapeBuilderShadow(
+  context: Excel.RequestContext,
+  sheet: Excel.Worksheet,
+  record: {
+    shapeName: string;
+    shapeType: InsertableShapeType;
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+    fillColor: string;
+    effect: ShapeBuilderEffect;
+  }
+): Promise<void> {
+  const shadowName = getShapeBuilderShadowName(record.shapeName);
+  const shadowOrNull = sheet.shapes.getItemOrNullObject(shadowName);
+  shadowOrNull.load("name");
+  await context.sync();
+
+  if (record.effect !== "Shadow") {
+    if (!shadowOrNull.isNullObject) {
+      shadowOrNull.delete();
+    }
+    return;
+  }
+
+  let shadow = shadowOrNull as Excel.Shape;
+  if (shadowOrNull.isNullObject) {
+    if (record.shapeType === "TextBox") {
+      shadow = sheet.shapes.addGeometricShape(Excel.GeometricShapeType.rectangle);
+    } else {
+      shadow = sheet.shapes.addGeometricShape(toGeometricShapeType(record.shapeType));
+    }
+    shadow.name = shadowName;
+  }
+
+  shadow.left = Math.max(0, record.left + 4);
+  shadow.top = Math.max(0, record.top + 4);
+  shadow.width = Math.max(2, record.width);
+  shadow.height = Math.max(2, record.height);
+  shadow.fill.setSolidColor("#111827");
+  shadow.fill.transparency = record.fillColor === NO_FILL_COLOR_TOKEN ? 0.55 : 0.72;
+  shadow.lineFormat.visible = false;
+  shadow.textFrame.textRange.text = "";
+  shadow.altTextTitle = "";
+  shadow.altTextDescription = "";
+  shadow.placement = Excel.Placement.oneCell;
+  shadow.setZOrder("SendBackward");
+}
+
 function normalizeShapeBuilderLinkType(value: string): ShapeBuilderLinkType {
   if (value === "Internal" || value === "External") {
     return value;
@@ -1528,7 +1643,7 @@ function applyShapeBuilderMetadata(shape: Excel.Shape, metadataInput: ShapeBuild
 
 function loadShapeBuilderProperties(shape: Excel.Shape): void {
   shape.load(
-    "id,name,type,geometricShapeType,left,top,zOrderPosition,width,height,altTextDescription,altTextTitle,fill/foregroundColor,lineFormat/color,lineFormat/weight,textFrame/textRange/text,textFrame/textRange/font/color,textFrame/textRange/font/size,textFrame/textRange/font/bold,textFrame/textRange/font/italic"
+    "id,name,type,geometricShapeType,left,top,zOrderPosition,width,height,altTextDescription,altTextTitle,fill/foregroundColor,fill/type,lineFormat/color,lineFormat/weight,textFrame/textRange/text,textFrame/textRange/font/color,textFrame/textRange/font/size,textFrame/textRange/font/bold,textFrame/textRange/font/italic"
   );
 }
 
@@ -1543,6 +1658,10 @@ function buildShapeBuilderRecord(sheetName: string, shape: Excel.Shape): ShapeBu
   );
   const displayText = asString(shape.textFrame.textRange.text);
   const text = stripShapeBuilderIcon(displayText, metadata.iconKey);
+  const fillColor =
+    asString(shape.fill.type) === "NoFill"
+      ? NO_FILL_COLOR_TOKEN
+      : sanitizeHexColor(asString(shape.fill.foregroundColor), "#A8D5AD");
 
   return {
     id: `${sheetName}::${shape.name}`,
@@ -1551,7 +1670,7 @@ function buildShapeBuilderRecord(sheetName: string, shape: Excel.Shape): ShapeBu
     shapeType: inferInsertableShapeType(asString(shape.geometricShapeType), asString(shape.type)),
     text,
     iconKey: metadata.iconKey,
-    fillColor: sanitizeHexColor(asString(shape.fill.foregroundColor), "#A8D5AD"),
+    fillColor,
     outlineColor: sanitizeHexColor(asString(shape.lineFormat.color), "#8CBF95"),
     outlineWidth: asNumber(shape.lineFormat.weight, 1),
     width: asNumber(shape.width, 160),
@@ -1593,6 +1712,7 @@ export async function listShapeBuilderShapes(): Promise<ShapeBuilderShapeRecord[
     const candidateShapes = shapes.items.filter(
       (shape) =>
         isShapeBuilderEditableShapeType(asString(shape.type)) &&
+        !shape.name.startsWith(NAV_SHADOW_PREFIX) &&
         !shape.name.startsWith(NAV_PANEL_PREFIX)
     );
 
