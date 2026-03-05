@@ -120,6 +120,7 @@ export interface ShapeBuilderShapeRecord {
   height: number;
   left: number;
   top: number;
+  zOrderPosition: number;
   fontColor: string;
   fontSize: number;
   bold: boolean;
@@ -1527,7 +1528,7 @@ function applyShapeBuilderMetadata(shape: Excel.Shape, metadataInput: ShapeBuild
 
 function loadShapeBuilderProperties(shape: Excel.Shape): void {
   shape.load(
-    "id,name,type,geometricShapeType,left,top,width,height,altTextDescription,altTextTitle,fill/foregroundColor,lineFormat/color,lineFormat/weight,textFrame/textRange/text,textFrame/textRange/font/color,textFrame/textRange/font/size,textFrame/textRange/font/bold,textFrame/textRange/font/italic"
+    "id,name,type,geometricShapeType,left,top,zOrderPosition,width,height,altTextDescription,altTextTitle,fill/foregroundColor,lineFormat/color,lineFormat/weight,textFrame/textRange/text,textFrame/textRange/font/color,textFrame/textRange/font/size,textFrame/textRange/font/bold,textFrame/textRange/font/italic"
   );
 }
 
@@ -1557,6 +1558,7 @@ function buildShapeBuilderRecord(sheetName: string, shape: Excel.Shape): ShapeBu
     height: asNumber(shape.height, 60),
     left: asNumber(shape.left, 100),
     top: asNumber(shape.top, 175),
+    zOrderPosition: asNumber(shape.zOrderPosition, 0),
     fontColor: sanitizeHexColor(asString(shape.textFrame.textRange.font.color), "#1F2937"),
     fontSize: asNumber(shape.textFrame.textRange.font.size, 16),
     bold: asBoolean(shape.textFrame.textRange.font.bold, true),
@@ -1566,6 +1568,18 @@ function buildShapeBuilderRecord(sheetName: string, shape: Excel.Shape): ShapeBu
     externalUrl: metadata.externalUrl,
     effect: metadata.effect,
   };
+}
+
+function compareShapeBuilderRecordsBySelectionPanePosition(
+  left: ShapeBuilderShapeRecord,
+  right: ShapeBuilderShapeRecord
+): number {
+  return (
+    right.zOrderPosition - left.zOrderPosition ||
+    left.top - right.top ||
+    left.left - right.left ||
+    left.shapeName.localeCompare(right.shapeName)
+  );
 }
 
 export async function listShapeBuilderShapes(): Promise<ShapeBuilderShapeRecord[]> {
@@ -1588,7 +1602,7 @@ export async function listShapeBuilderShapes(): Promise<ShapeBuilderShapeRecord[
     await context.sync();
 
     const records = candidateShapes.map((shape) => buildShapeBuilderRecord(sheet.name, shape));
-    records.sort((left, right) => left.top - right.top || left.left - right.left || left.shapeName.localeCompare(right.shapeName));
+    records.sort(compareShapeBuilderRecordsBySelectionPanePosition);
     return records;
   });
 }

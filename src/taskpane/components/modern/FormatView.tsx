@@ -41,6 +41,7 @@ interface FormatViewProps {
 }
 
 type EditorTab = "shape" | "style" | "size" | "link";
+type ShapeLinkFilter = "all" | "none" | "internal" | "external";
 
 const SHAPE_TYPES: Array<{ value: InsertableShapeType; label: string }> = [
   { value: "RoundedRectangle", label: "Rounded Rectangle" },
@@ -83,6 +84,15 @@ const parseCellDestination = (value: string): string | null => {
   }
   return `cell::${match[1].trim()}::${match[2].toUpperCase()}`;
 };
+
+const compareShapesBySelectionPanePosition = (left: ShapeBuilderShapeRecord, right: ShapeBuilderShapeRecord): number =>
+  right.zOrderPosition - left.zOrderPosition ||
+  left.top - right.top ||
+  left.left - right.left ||
+  left.shapeName.localeCompare(right.shapeName);
+
+const sortShapesBySelectionPanePosition = (records: ShapeBuilderShapeRecord[]): ShapeBuilderShapeRecord[] =>
+  [...records].sort(compareShapesBySelectionPanePosition);
 
 const styles = makeStyles({
   root: { display: "grid", gap: "16px" },
@@ -236,6 +246,8 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
   const [newFormatName, setNewFormatName] = useState("");
   const [tab, setTab] = useState<EditorTab>("shape");
   const [draft, setDraft] = useState<ShapeBuilderShapeRecord | null>(null);
+  const [shapeFilterQuery, setShapeFilterQuery] = useState("");
+  const [shapeLinkFilter, setShapeLinkFilter] = useState<ShapeLinkFilter>("all");
   const [iconQuery, setIconQuery] = useState("");
   const [cellRefInput, setCellRefInput] = useState("");
   const [applyTemplateAll, setApplyTemplateAll] = useState(false);
@@ -243,12 +255,32 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
   const [status, setStatus] = useState("");
   const [statusType, setStatusType] = useState<"ok" | "error">("ok");
   const shapeHandlersRef = useRef<Array<{ remove: () => Promise<void> | void }>>([]);
+  const editorCardRef = useRef<HTMLDivElement | null>(null);
 
   const selectedShape = useMemo(() => shapes.find((x) => x.id === selectedShapeId) ?? null, [shapes, selectedShapeId]);
   const filteredIcons = useMemo(() => {
     const q = iconQuery.trim().toLowerCase();
     return q ? ICONS.filter((x) => x.key.includes(q) || x.label.toLowerCase().includes(q)) : ICONS;
   }, [iconQuery]);
+  const filteredShapes = useMemo(() => {
+    const query = shapeFilterQuery.trim().toLowerCase();
+    return shapes.filter((shape) => {
+      if (shapeLinkFilter !== "all" && shape.linkType.toLowerCase() !== shapeLinkFilter) {
+        return false;
+      }
+      if (!query) {
+        return true;
+      }
+      return (
+        shape.text.toLowerCase().includes(query) ||
+        shape.shapeName.toLowerCase().includes(query) ||
+        shape.shapeType.toLowerCase().includes(query) ||
+        shape.iconKey.toLowerCase().includes(query) ||
+        shape.linkType.toLowerCase().includes(query)
+      );
+    });
+  }, [shapes, shapeFilterQuery, shapeLinkFilter]);
+  const isShapeListFiltered = shapeFilterQuery.trim().length > 0 || shapeLinkFilter !== "all";
 
   const setOk = (message: string) => {
     setStatusType("ok");
@@ -276,7 +308,7 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
       const failures: string[] = [];
 
       if (shapeResult.status === "fulfilled") {
-        const shapeRecords = shapeResult.value;
+        const shapeRecords = sortShapesBySelectionPanePosition(shapeResult.value);
         setShapes(shapeRecords);
         setSelectedShapeId((prev) => (shapeRecords.some((x) => x.id === prev) ? prev : shapeRecords[0]?.id ?? ""));
       } else {
@@ -403,7 +435,7 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
       }
       try {
         const updated = await updateShapeBuilderShape(selectedShape.sheetName, selectedShape.shapeName, patch);
-        setShapes((prev) => prev.map((x) => (x.id === selectedShape.id ? updated : x)));
+        setShapes((prev) => sortShapesBySelectionPanePosition(prev.map((x) => (x.id === selectedShape.id ? updated : x))));
         setDraft(updated);
       } catch (error) {
         setErr(error);
@@ -433,7 +465,7 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
         externalUrl: "",
         effect: "Shadow",
       });
-      setShapes((prev) => [...prev, created].sort((a, b) => a.top - b.top || a.left - b.left));
+      setShapes((prev) => sortShapesBySelectionPanePosition([...prev, created]));
       setSelectedShapeId(created.id);
       setTab("shape");
       setOk("Shape added.");
@@ -447,7 +479,7 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
   const duplicateShape = async (shape: ShapeBuilderShapeRecord) => {
     try {
       const copy = await duplicateShapeBuilderShape(shape.sheetName, shape.shapeName);
-      setShapes((prev) => [...prev, copy].sort((a, b) => a.top - b.top || a.left - b.left));
+      setShapes((prev) => sortShapesBySelectionPanePosition([...prev, copy]));
       setSelectedShapeId(copy.id);
       setOk("Shape duplicated.");
     } catch (error) {
@@ -461,13 +493,19 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
     }
     try {
       await deleteShapeBuilderShape(shape.sheetName, shape.shapeName);
-      const next = shapes.filter((x) => x.id !== shape.id);
+      const next = sortShapesBySelectionPanePosition(shapes.filter((x) => x.id !== shape.id));
       setShapes(next);
       setSelectedShapeId((prev) => (prev === shape.id ? next[0]?.id ?? "" : prev));
       setOk("Shape deleted.");
     } catch (error) {
       setErr(error);
     }
+  };
+
+  const editShape = (shape: ShapeBuilderShapeRecord) => {
+    setSelectedShapeId(shape.id);
+    setTab("shape");
+    editorCardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
   const applyTemplate = async (layout: "Vertical" | "Horizontal") => {
@@ -554,11 +592,38 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
       <div className={s.card}>
         <div className={s.row}>
           <Text className={s.title}>Shape List</Text>
-          <Text className={s.muted}>{shapes.length} on active sheet</Text>
+          <div className={s.horizontal}>
+            <Text className={s.muted}>
+              {isShapeListFiltered ? `${filteredShapes.length} of ${shapes.length}` : `${shapes.length}`} on active sheet
+            </Text>
+            {!isPopout ? (
+              <button className={s.smallBtn} type="button" onClick={() => void openFormatEditorPopout()}>
+                Pop Out
+              </button>
+            ) : null}
+          </div>
+        </div>
+        <div className={s.grid2}>
+          <Input
+            value={shapeFilterQuery}
+            placeholder="Filter by name, text, type, icon..."
+            onChange={(_, data) => setShapeFilterQuery(data.value)}
+          />
+          <select
+            className={s.select}
+            value={shapeLinkFilter}
+            onChange={(event) => setShapeLinkFilter(event.target.value as ShapeLinkFilter)}
+          >
+            <option value="all">All links</option>
+            <option value="none">No link</option>
+            <option value="internal">Internal link</option>
+            <option value="external">External link</option>
+          </select>
         </div>
         <div className={s.shapeList}>
           {!shapes.length ? <div className={s.empty}>No shapes yet. Click Add Shape.</div> : null}
-          {shapes.map((shape) => {
+          {shapes.length && !filteredShapes.length ? <div className={s.empty}>No shapes match the current filters.</div> : null}
+          {filteredShapes.map((shape) => {
             const selected = shape.id === selectedShapeId;
             return (
               <div
@@ -579,10 +644,23 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
                 </div>
                 <div>
                   <Text className={s.itemName}>{shape.text || shape.shapeName}</Text>
-                  <Text className={s.itemSub}>{shape.shapeType.replace(/([A-Z])/g, " $1").trim()}</Text>
+                  <Text className={s.itemSub}>
+                    {shape.shapeType.replace(/([A-Z])/g, " $1").trim()} • layer {shape.zOrderPosition}
+                  </Text>
                   <div className={s.itemTag}>{shape.linkType.toLowerCase()}</div>
                 </div>
                 <div className={s.actionCol}>
+                  <button
+                    className={s.smallBtn}
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      editShape(shape);
+                    }}
+                    disabled={busy}
+                  >
+                    Edit
+                  </button>
                   <button className={s.smallBtn} type="button" onClick={(event) => { event.stopPropagation(); void duplicateShape(shape); }} disabled={busy}>
                     Copy
                   </button>
@@ -596,7 +674,7 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
         </div>
       </div>
 
-      <div className={s.card}>
+      <div className={s.card} ref={editorCardRef}>
         <div className={s.row}>
           <Text className={s.title}>Editor</Text>
           <Text className={s.muted}>{selectedShape ? selectedShape.shapeName : "Select a shape"}</Text>
