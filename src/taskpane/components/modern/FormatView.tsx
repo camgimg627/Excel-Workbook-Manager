@@ -226,11 +226,11 @@ const styles = makeStyles({
   input: { width: "100%", boxSizing: "border-box", border: `1px solid ${MODERN_TOKENS.colorBorder}`, borderRadius: "8px", padding: "9px 10px", fontSize: "14px" },
   select: { width: "100%", boxSizing: "border-box", border: `1px solid ${MODERN_TOKENS.colorBorder}`, borderRadius: "8px", padding: "9px 10px", fontSize: "14px", backgroundColor: "#FFFFFF" },
   grid2: { display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: "8px" },
-  swatches: { display: "grid", gridTemplateColumns: "repeat(5,minmax(0,1fr))", gap: "8px" },
+  swatches: { display: "grid", gridTemplateColumns: "repeat(6,minmax(0,1fr))", gap: "8px" },
   swatch: { height: "34px", borderRadius: "8px", border: `1px solid ${MODERN_TOKENS.colorBorder}`, cursor: "pointer" },
   swatchActive: { boxShadow: "inset 0 0 0 2px #FFFFFF, 0 0 0 2px #4679C7" },
   colorToolRow: { display: "flex", gap: "8px", flexWrap: "wrap" },
-  noFillBtnActive: { backgroundColor: "#EFF4FE", borderColor: "#7EA5E1" },
+  noFillBtnActive: { backgroundColor: "#EFF4FE", border: "1px solid #7EA5E1" },
   colorInput: {
     width: "100%",
     height: "36px",
@@ -275,6 +275,7 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
   const [shapes, setShapes] = useState<ShapeBuilderShapeRecord[]>([]);
   const [destinations, setDestinations] = useState<NavigationDestinationOption[]>([]);
   const [formats, setFormats] = useState<SheetFormatRecord[]>([]);
+  const [themeColors, setThemeColors] = useState<string[]>(DEFAULT_THEME_COLORS);
   const [selectedShapeId, setSelectedShapeId] = useState("");
   const [selectedFormatId, setSelectedFormatId] = useState("");
   const [newFormatName, setNewFormatName] = useState("");
@@ -288,8 +289,10 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
   const [statusType, setStatusType] = useState<"ok" | "error">("ok");
+  const [styleBaseline, setStyleBaseline] = useState<StyleBaseline | null>(null);
   const shapeHandlersRef = useRef<Array<{ remove: () => Promise<void> | void }>>([]);
   const editorCardRef = useRef<HTMLDivElement | null>(null);
+  const styleBaselineShapeIdRef = useRef<string>("");
 
   const selectedShape = useMemo(() => shapes.find((x) => x.id === selectedShapeId) ?? null, [shapes, selectedShapeId]);
   const filteredIcons = useMemo(() => {
@@ -334,10 +337,11 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
           (value): { status: "fulfilled"; value: T } => ({ status: "fulfilled", value }),
           (reason): { status: "rejected"; reason: unknown } => ({ status: "rejected", reason })
         );
-      const [shapeResult, destinationResult, formatResult] = await Promise.all([
+      const [shapeResult, destinationResult, formatResult, themeResult] = await Promise.all([
         settle(listShapeBuilderShapes()),
         settle(listNavigationDestinations()),
         settle(listSheetFormats()),
+        settle(listWorkbookThemeColors()),
       ]);
       const failures: string[] = [];
 
@@ -368,6 +372,13 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
         failures.push(`Formats: ${normalizeError(formatResult.reason)}`);
       }
 
+      if (themeResult.status === "fulfilled") {
+        setThemeColors(themeResult.value.length ? themeResult.value : DEFAULT_THEME_COLORS);
+      } else {
+        setThemeColors(DEFAULT_THEME_COLORS);
+        failures.push(`Theme colors: ${normalizeError(themeResult.reason)}`);
+      }
+
       if (failures.length > 0) {
         setStatusType("error");
         setStatus(failures.join(" | "));
@@ -383,6 +394,18 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
 
   useEffect(() => {
     setDraft(selectedShape ? { ...selectedShape } : null);
+    if (!selectedShape) {
+      styleBaselineShapeIdRef.current = "";
+      setStyleBaseline(null);
+    } else if (styleBaselineShapeIdRef.current !== selectedShape.id) {
+      styleBaselineShapeIdRef.current = selectedShape.id;
+      setStyleBaseline({
+        fillColor: selectedShape.fillColor,
+        outlineColor: selectedShape.outlineColor,
+        outlineWidth: selectedShape.outlineWidth,
+        effect: selectedShape.effect,
+      });
+    }
     setIconQuery("");
     setCellRefInput("");
   }, [selectedShape]);
@@ -477,6 +500,75 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
     },
     [selectedShape]
   );
+
+  const applyFillColor = (value: string) => {
+    if (!draft) {
+      return;
+    }
+    const fillColor = value === NO_FILL_COLOR_TOKEN ? NO_FILL_COLOR_TOKEN : toUpperHexOrFallback(value, draft.fillColor);
+    setDraft({ ...draft, fillColor });
+    void patchShape({ fillColor });
+  };
+
+  const applyOutlineColor = (value: string) => {
+    if (!draft) {
+      return;
+    }
+    const outlineColor = toUpperHexOrFallback(value, draft.outlineColor);
+    setDraft({ ...draft, outlineColor });
+    void patchShape({ outlineColor });
+  };
+
+  const pickColorFromScreen = async (target: "fill" | "outline") => {
+    if (!draft) {
+      return;
+    }
+    const EyeDropperCtor = (window as Window & { EyeDropper?: new () => EyeDropperLike }).EyeDropper;
+    if (!EyeDropperCtor) {
+      setErr("Eye dropper is not available in this Excel host.");
+      return;
+    }
+    try {
+      const eyedropper = new EyeDropperCtor();
+      const result = await eyedropper.open();
+      if (!isHexColor(result.sRGBHex)) {
+        setErr("Picked color was invalid.");
+        return;
+      }
+      if (target === "fill") {
+        applyFillColor(result.sRGBHex);
+      } else {
+        applyOutlineColor(result.sRGBHex);
+      }
+    } catch (error) {
+      const message = normalizeError(error).toLowerCase();
+      if (message.includes("abort") || message.includes("cancel")) {
+        return;
+      }
+      setErr(error);
+    }
+  };
+
+  const revertStyleChanges = () => {
+    if (!draft || !styleBaseline) {
+      return;
+    }
+    const patch: Partial<CreateShapeBuilderShapeRequest> = {
+      fillColor: styleBaseline.fillColor,
+      outlineColor: styleBaseline.outlineColor,
+      outlineWidth: styleBaseline.outlineWidth,
+      effect: styleBaseline.effect,
+    };
+    setDraft({
+      ...draft,
+      fillColor: styleBaseline.fillColor,
+      outlineColor: styleBaseline.outlineColor,
+      outlineWidth: styleBaseline.outlineWidth,
+      effect: styleBaseline.effect,
+    });
+    void patchShape(patch);
+    setOk("Style reverted.");
+  };
 
   const addShape = async () => {
     setBusy(true);
@@ -673,7 +765,14 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
                 role="button"
                 tabIndex={0}
               >
-                <div className={s.preview} style={{ backgroundColor: shape.fillColor, border: `${Math.max(1, shape.outlineWidth)}px solid ${shape.outlineColor}`, color: shape.fontColor }}>
+                <div
+                  className={s.preview}
+                  style={{
+                    backgroundColor: shape.fillColor === NO_FILL_COLOR_TOKEN ? "#FFFFFF" : shape.fillColor,
+                    border: `${Math.max(1, shape.outlineWidth)}px solid ${shape.outlineColor}`,
+                    color: shape.fontColor,
+                  }}
+                >
                   {shape.text || "Shape"}
                 </div>
                 <div>
@@ -747,14 +846,61 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
 
             {tab === "style" ? (
               <div className={s.panel}>
+                <div className={s.colorToolRow}>
+                  <button
+                    className={`${s.smallBtn} ${draft.fillColor === NO_FILL_COLOR_TOKEN ? s.noFillBtnActive : ""}`}
+                    type="button"
+                    onClick={() => applyFillColor(NO_FILL_COLOR_TOKEN)}
+                  >
+                    No Fill
+                  </button>
+                  <button className={s.smallBtn} type="button" onClick={() => void pickColorFromScreen("fill")}>
+                    Eyedropper Fill
+                  </button>
+                  <button className={s.smallBtn} type="button" onClick={() => void pickColorFromScreen("outline")}>
+                    Eyedropper Outline
+                  </button>
+                  <button className={s.smallBtn} type="button" onClick={revertStyleChanges} disabled={!styleBaseline}>
+                    Revert
+                  </button>
+                </div>
+                <Text className={s.muted}>Theme swatches are pulled from this workbook's active theme.</Text>
                 <Text className={s.label}>Fill Color</Text>
                 <div className={s.swatches}>
-                  {COLORS.map((color) => <button key={`f-${color}`} className={`${s.swatch} ${draft.fillColor.toLowerCase() === color.toLowerCase() ? s.swatchActive : ""}`} style={{ backgroundColor: color }} type="button" onClick={() => { setDraft({ ...draft, fillColor: color }); void patchShape({ fillColor: color }); }} />)}
+                  {themeColors.map((color) => (
+                    <button
+                      key={`f-${color}`}
+                      className={`${s.swatch} ${draft.fillColor.toLowerCase() === color.toLowerCase() ? s.swatchActive : ""}`}
+                      style={{ backgroundColor: color }}
+                      type="button"
+                      onClick={() => applyFillColor(color)}
+                    />
+                  ))}
                 </div>
+                <input
+                  className={s.colorInput}
+                  type="color"
+                  value={draft.fillColor === NO_FILL_COLOR_TOKEN ? "#FFFFFF" : toUpperHexOrFallback(draft.fillColor, "#A8D5AD")}
+                  onChange={(event) => applyFillColor(event.target.value)}
+                />
                 <Text className={s.label}>Outline Color</Text>
                 <div className={s.swatches}>
-                  {COLORS.map((color) => <button key={`o-${color}`} className={`${s.swatch} ${draft.outlineColor.toLowerCase() === color.toLowerCase() ? s.swatchActive : ""}`} style={{ backgroundColor: color }} type="button" onClick={() => { setDraft({ ...draft, outlineColor: color }); void patchShape({ outlineColor: color }); }} />)}
+                  {themeColors.map((color) => (
+                    <button
+                      key={`o-${color}`}
+                      className={`${s.swatch} ${draft.outlineColor.toLowerCase() === color.toLowerCase() ? s.swatchActive : ""}`}
+                      style={{ backgroundColor: color }}
+                      type="button"
+                      onClick={() => applyOutlineColor(color)}
+                    />
+                  ))}
                 </div>
+                <input
+                  className={s.colorInput}
+                  type="color"
+                  value={toUpperHexOrFallback(draft.outlineColor, "#8CBF95")}
+                  onChange={(event) => applyOutlineColor(event.target.value)}
+                />
                 <Text className={s.label}>Outline Width: {Math.round(draft.outlineWidth)}px</Text>
                 <input type="range" min={0} max={12} step={1} value={Math.round(draft.outlineWidth)} onChange={(event) => setDraft({ ...draft, outlineWidth: Number(event.target.value) })} onMouseUp={() => void patchShape({ outlineWidth: draft.outlineWidth })} onTouchEnd={() => void patchShape({ outlineWidth: draft.outlineWidth })} />
                 <Text className={s.label}>Effect</Text>
