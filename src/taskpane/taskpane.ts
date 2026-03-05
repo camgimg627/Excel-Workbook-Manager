@@ -1271,6 +1271,44 @@ export async function listNavigationDestinations(): Promise<NavigationDestinatio
   });
 }
 
+export async function listWorkbookThemeColors(): Promise<string[]> {
+  try {
+    return await Excel.run(async (context) => {
+      const metaSheetOrNull = context.workbook.worksheets.getItemOrNullObject("__WBM_META");
+      metaSheetOrNull.load("name");
+      await context.sync();
+
+      const metaSheet = metaSheetOrNull.isNullObject
+        ? context.workbook.worksheets.add("__WBM_META")
+        : (metaSheetOrNull as Excel.Worksheet);
+      metaSheet.visibility = Excel.SheetVisibility.hidden;
+
+      const cells = WORKBOOK_THEME_STYLE_SEQUENCE.map((styleName, index) => {
+        const cell = metaSheet.getRangeByIndexes(index, 2, 1, 1);
+        cell.style = styleName;
+        cell.load("format/fill/color");
+        return cell;
+      });
+      await context.sync();
+
+      const seen = new Set<string>();
+      const colors = cells
+        .map((cell) => sanitizeHexColor(asString(cell.format.fill.color), ""))
+        .filter((color) => {
+          if (!color || seen.has(color)) {
+            return false;
+          }
+          seen.add(color);
+          return true;
+        });
+
+      return colors.length ? colors : [...WORKBOOK_THEME_SWATCH_FALLBACK];
+    });
+  } catch {
+    return [...WORKBOOK_THEME_SWATCH_FALLBACK];
+  }
+}
+
 export async function activateNavigationDestination(destinationId: string): Promise<void> {
   const parsed = parseDestinationId(destinationId);
 
@@ -1352,6 +1390,7 @@ export async function applyNavigationTemplate(request: ApplyNavigationTemplateRe
         const alt = asString(shape.altTextDescription);
         if (
           shape.name.startsWith(NAV_SHAPE_PREFIX) ||
+          shape.name.startsWith(NAV_SHADOW_PREFIX) ||
           shape.name.startsWith(NAV_PANEL_PREFIX) ||
           alt.startsWith(NAV_TARGET_PREFIX)
         ) {
@@ -1761,7 +1800,7 @@ export async function createShapeBuilderShape(request: CreateShapeBuilderShapeRe
     shape.top = Math.max(0, top);
     shape.width = Math.max(80, asNumber(request.width, 160));
     shape.height = Math.max(24, asNumber(request.height, 60));
-    shape.fill.setSolidColor(sanitizeHexColor(request.fillColor, "#A8D5AD"));
+    const normalizedFillColor = applyShapeBuilderFill(shape, asString(request.fillColor, "#A8D5AD"), "#A8D5AD");
     shape.lineFormat.color = sanitizeHexColor(request.outlineColor, "#8CBF95");
     shape.lineFormat.weight = Math.max(0, asNumber(request.outlineWidth, 2));
     shape.textFrame.textRange.font.color = sanitizeHexColor(request.fontColor, "#1F2937");
@@ -1779,6 +1818,16 @@ export async function createShapeBuilderShape(request: CreateShapeBuilderShapeRe
       internalDestinationId: request.internalDestinationId,
       externalUrl: request.externalUrl,
       effect: request.effect,
+    });
+    await syncShapeBuilderShadow(context, sheet, {
+      shapeName,
+      shapeType: request.shapeType,
+      left: shape.left,
+      top: shape.top,
+      width: shape.width,
+      height: shape.height,
+      fillColor: normalizedFillColor,
+      effect: normalizeShapeBuilderEffect(request.effect),
     });
 
     loadShapeBuilderProperties(shape);
@@ -1814,7 +1863,11 @@ export async function updateShapeBuilderShape(
     shape.top = Math.max(0, asNumber(updates.top, existing.top));
     shape.width = Math.max(80, asNumber(updates.width, existing.width));
     shape.height = Math.max(24, asNumber(updates.height, existing.height));
-    shape.fill.setSolidColor(sanitizeHexColor(asString(updates.fillColor, existing.fillColor), existing.fillColor));
+    const nextFillColor = applyShapeBuilderFill(
+      shape,
+      asString(updates.fillColor, existing.fillColor),
+      existing.fillColor
+    );
     shape.lineFormat.color = sanitizeHexColor(asString(updates.outlineColor, existing.outlineColor), existing.outlineColor);
     shape.lineFormat.weight = Math.max(0, asNumber(updates.outlineWidth, existing.outlineWidth));
     shape.textFrame.textRange.font.color = sanitizeHexColor(
@@ -1842,6 +1895,16 @@ export async function updateShapeBuilderShape(
     const nextText = asString(updates.text, existing.text);
     shape.textFrame.textRange.text = buildShapeBuilderDisplayText(nextMetadata.iconKey, nextText);
     applyShapeBuilderMetadata(shape, nextMetadata);
+    await syncShapeBuilderShadow(context, sheet, {
+      shapeName,
+      shapeType: nextShapeType,
+      left: shape.left,
+      top: shape.top,
+      width: shape.width,
+      height: shape.height,
+      fillColor: nextFillColor,
+      effect: nextMetadata.effect,
+    });
 
     loadShapeBuilderProperties(shape);
     await context.sync();
@@ -1851,7 +1914,14 @@ export async function updateShapeBuilderShape(
 
 export async function deleteShapeBuilderShape(sheetName: string, shapeName: string): Promise<void> {
   await Excel.run(async (context) => {
-    const shape = context.workbook.worksheets.getItem(sheetName).shapes.getItem(shapeName);
+    const sheet = context.workbook.worksheets.getItem(sheetName);
+    const shape = sheet.shapes.getItem(shapeName);
+    const shadowOrNull = sheet.shapes.getItemOrNullObject(getShapeBuilderShadowName(shapeName));
+    shadowOrNull.load("name");
+    await context.sync();
+    if (!shadowOrNull.isNullObject) {
+      shadowOrNull.delete();
+    }
     shape.delete();
     await context.sync();
   });
@@ -1880,7 +1950,7 @@ export async function duplicateShapeBuilderShape(
     duplicated.top = source.top + 16;
     duplicated.width = source.width;
     duplicated.height = source.height;
-    duplicated.fill.setSolidColor(source.fillColor);
+    applyShapeBuilderFill(duplicated, source.fillColor, "#A8D5AD");
     duplicated.lineFormat.color = source.outlineColor;
     duplicated.lineFormat.weight = source.outlineWidth;
     duplicated.textFrame.textRange.font.color = source.fontColor;
@@ -1896,6 +1966,16 @@ export async function duplicateShapeBuilderShape(
       linkType: source.linkType,
       internalDestinationId: source.internalDestinationId,
       externalUrl: source.externalUrl,
+      effect: source.effect,
+    });
+    await syncShapeBuilderShadow(context, sheet, {
+      shapeName: duplicated.name,
+      shapeType: source.shapeType,
+      left: duplicated.left,
+      top: duplicated.top,
+      width: duplicated.width,
+      height: duplicated.height,
+      fillColor: source.fillColor,
       effect: source.effect,
     });
 

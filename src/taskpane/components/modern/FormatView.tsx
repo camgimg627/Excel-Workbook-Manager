@@ -24,8 +24,10 @@ import {
   freezeFirstColumn,
   freezeTopRow,
   listNavigationDestinations,
+  listWorkbookThemeColors,
   listShapeBuilderShapes,
   listSheetFormats,
+  NO_FILL_COLOR_TOKEN,
   openFormatEditorPopout,
   recaptureSheetFormatFromSelection,
   refreshPivotTables,
@@ -42,6 +44,7 @@ interface FormatViewProps {
 
 type EditorTab = "shape" | "style" | "size" | "link";
 type ShapeLinkFilter = "all" | "none" | "internal" | "external";
+type StyleBaseline = Pick<ShapeBuilderShapeRecord, "fillColor" | "outlineColor" | "outlineWidth" | "effect">;
 
 const SHAPE_TYPES: Array<{ value: InsertableShapeType; label: string }> = [
   { value: "RoundedRectangle", label: "Rounded Rectangle" },
@@ -62,7 +65,17 @@ const ICONS = [
   { key: "help", label: "Help", symbol: "?" },
 ];
 
-const COLORS = ["#4679C7", "#54A75A", "#E8791B", "#CF2E2E", "#6742B5", "#5AA79D", "#EAB51C", "#8B97A5", "#1E2B3D"];
+const DEFAULT_THEME_COLORS = [
+  "#4679C7",
+  "#54A75A",
+  "#E8791B",
+  "#CF2E2E",
+  "#6742B5",
+  "#5AA79D",
+  "#EAB51C",
+  "#8B97A5",
+  "#1E2B3D",
+];
 
 const STYLE_PRESETS: Array<{ preset: CellStylePreset; label: string }> = [
   { preset: "Input Cell", label: "Input" },
@@ -73,6 +86,16 @@ const STYLE_PRESETS: Array<{ preset: CellStylePreset; label: string }> = [
 
 const normalizeError = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
+const isHexColor = (value: string) => /^#[0-9a-f]{6}$/i.test(value);
+const toUpperHexOrFallback = (value: string, fallback: string) => (isHexColor(value) ? value.toUpperCase() : fallback);
+
+interface EyeDropperResult {
+  sRGBHex: string;
+}
+
+interface EyeDropperLike {
+  open: () => Promise<EyeDropperResult>;
+}
 
 const parseCellDestination = (value: string): string | null => {
   const trimmed = value.trim();
@@ -206,6 +229,17 @@ const styles = makeStyles({
   swatches: { display: "grid", gridTemplateColumns: "repeat(5,minmax(0,1fr))", gap: "8px" },
   swatch: { height: "34px", borderRadius: "8px", border: `1px solid ${MODERN_TOKENS.colorBorder}`, cursor: "pointer" },
   swatchActive: { boxShadow: "inset 0 0 0 2px #FFFFFF, 0 0 0 2px #4679C7" },
+  colorToolRow: { display: "flex", gap: "8px", flexWrap: "wrap" },
+  noFillBtnActive: { backgroundColor: "#EFF4FE", borderColor: "#7EA5E1" },
+  colorInput: {
+    width: "100%",
+    height: "36px",
+    borderRadius: "8px",
+    border: `1px solid ${MODERN_TOKENS.colorBorder}`,
+    padding: "2px 6px",
+    backgroundColor: "#FFFFFF",
+    cursor: "pointer",
+  },
   iconGrid: { display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: "8px", maxHeight: "170px", overflowY: "auto", border: `1px solid ${MODERN_TOKENS.colorBorder}`, borderRadius: "8px", padding: "8px" },
   iconBtn: { borderRadius: "8px", border: `1px solid ${MODERN_TOKENS.colorBorder}`, backgroundColor: "#FFFFFF", padding: "8px 6px", display: "grid", justifyItems: "center", gap: "2px", cursor: "pointer", fontSize: "11px" },
   iconActive: { border: "1px solid #7EA5E1", backgroundColor: "#EFF4FE" },
