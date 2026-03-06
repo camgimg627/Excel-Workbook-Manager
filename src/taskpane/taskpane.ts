@@ -105,6 +105,8 @@ export interface ApplyNavigationTemplateRequest {
 
 export type ShapeBuilderLinkType = "None" | "Internal" | "External";
 export type ShapeBuilderEffect = "None" | "Shadow";
+export type ShapeBuilderTextHorizontalAlignment = "Left" | "Center" | "Right";
+export type ShapeBuilderTextVerticalAlignment = "Top" | "Middle" | "Bottom";
 
 export interface ShapeBuilderShapeRecord {
   id: string;
@@ -125,6 +127,8 @@ export interface ShapeBuilderShapeRecord {
   fontSize: number;
   bold: boolean;
   italic: boolean;
+  textHorizontalAlignment: ShapeBuilderTextHorizontalAlignment;
+  textVerticalAlignment: ShapeBuilderTextVerticalAlignment;
   linkType: ShapeBuilderLinkType;
   internalDestinationId: string;
   externalUrl: string;
@@ -146,6 +150,8 @@ export interface CreateShapeBuilderShapeRequest {
   fontSize: number;
   bold: boolean;
   italic: boolean;
+  textHorizontalAlignment: ShapeBuilderTextHorizontalAlignment;
+  textVerticalAlignment: ShapeBuilderTextVerticalAlignment;
   linkType: ShapeBuilderLinkType;
   internalDestinationId: string;
   externalUrl: string;
@@ -153,6 +159,12 @@ export interface CreateShapeBuilderShapeRequest {
 }
 
 export type UpdateShapeBuilderShapeRequest = Partial<CreateShapeBuilderShapeRequest>;
+
+export interface ShapeBuilderTextSelectionFormatRequest {
+  bold?: boolean;
+  italic?: boolean;
+  color?: string;
+}
 
 export type CellStylePreset = "Input Cell" | "Parameter Cell" | "Header" | "Subheader";
 export type InsertableShapeType =
@@ -498,6 +510,64 @@ export async function unfreezePanes() {
     const sheet = context.workbook.worksheets.getActiveWorksheet();
     sheet.freezePanes.unfreeze();
   });
+}
+
+async function setActiveSheetVisibility(visibility: Excel.SheetVisibility): Promise<void> {
+  await runFormattingCommand(async (context) => {
+    const sheets = context.workbook.worksheets;
+    const activeSheet = sheets.getActiveWorksheet();
+    sheets.load("items/name,items/visibility");
+    activeSheet.load("name");
+    await context.sync();
+
+    const visibleSheets = sheets.items.filter(
+      (sheet) => asString(sheet.visibility).toLowerCase() === Excel.SheetVisibility.visible.toLowerCase()
+    );
+    const isActiveVisible = visibleSheets.some((sheet) => sheet.name === activeSheet.name);
+    if (isActiveVisible && visibleSheets.length <= 1) {
+      throw new Error("Cannot hide the only visible worksheet.");
+    }
+
+    activeSheet.visibility = visibility;
+  });
+}
+
+export async function hideActiveSheet() {
+  await setActiveSheetVisibility(Excel.SheetVisibility.hidden);
+}
+
+export async function hideActiveSheetVeryHidden() {
+  await setActiveSheetVisibility(Excel.SheetVisibility.veryHidden);
+}
+
+async function applyDimensionToSelectionOrSheet(
+  apply: (target: Excel.Range, value: number) => void,
+  value: number
+): Promise<void> {
+  await runFormattingCommand(async (context) => {
+    const sheet = context.workbook.worksheets.getActiveWorksheet();
+    const selection = context.workbook.getSelectedRange();
+    selection.load("rowCount,columnCount");
+    await context.sync();
+
+    const target =
+      selection.rowCount <= 1 && selection.columnCount <= 1 ? sheet.getRange() : selection;
+    apply(target, value);
+  });
+}
+
+export async function setSelectionColumnWidth(width: number) {
+  const next = Math.max(0, asNumber(width, 0));
+  await applyDimensionToSelectionOrSheet((target, value) => {
+    target.format.columnWidth = value;
+  }, next);
+}
+
+export async function setSelectionRowHeight(height: number) {
+  const next = Math.max(0, asNumber(height, 0));
+  await applyDimensionToSelectionOrSheet((target, value) => {
+    target.format.rowHeight = value;
+  }, next);
 }
 
 export async function toggleBold() {
@@ -1455,15 +1525,321 @@ export async function applyNavigationTemplate(request: ApplyNavigationTemplateRe
   });
 }
 
-const SHAPE_BUILDER_ICON_SYMBOLS: Record<string, string> = {
-  none: "",
-  home: "⌂",
-  data: "▦",
-  controls: "⌘",
-  reports: "▤",
-  settings: "⚙",
-  help: "?",
+export interface ShapeBuilderIconOption {
+  key: string;
+  label: string;
+  symbol: string;
+  keywords: string[];
+}
+
+const RAW_SHAPE_BUILDER_ICON_OPTIONS: Array<Omit<ShapeBuilderIconOption, "keywords">> = [
+  { key: "none", label: "None", symbol: "" },
+  { key: "home", label: "Home", symbol: "⌂" },
+  { key: "home_alt", label: "Home Alt", symbol: "🏠" },
+  { key: "dashboard", label: "Dashboard", symbol: "⌗" },
+  { key: "data", label: "Data", symbol: "▦" },
+  { key: "controls", label: "Controls", symbol: "⌘" },
+  { key: "reports", label: "Reports", symbol: "▤" },
+  { key: "table", label: "Table", symbol: "▥" },
+  { key: "database", label: "Database", symbol: "🗄" },
+  { key: "document", label: "Document", symbol: "🗎" },
+  { key: "folder", label: "Folder", symbol: "📁" },
+  { key: "file", label: "File", symbol: "📄" },
+  { key: "template", label: "Template", symbol: "🗒" },
+  { key: "search", label: "Search", symbol: "⌕" },
+  { key: "settings", label: "Settings", symbol: "⚙" },
+  { key: "gear_alt", label: "Gear Alt", symbol: "⚒" },
+  { key: "tools", label: "Tools", symbol: "🛠" },
+  { key: "wrench", label: "Wrench", symbol: "🔧" },
+  { key: "palette", label: "Palette", symbol: "🎨" },
+  { key: "help", label: "Help", symbol: "?" },
+  { key: "info", label: "Info", symbol: "ℹ" },
+  { key: "warning", label: "Warning", symbol: "⚠" },
+  { key: "check", label: "Check", symbol: "✓" },
+  { key: "close", label: "Close", symbol: "✕" },
+  { key: "plus", label: "Plus", symbol: "+" },
+  { key: "minus", label: "Minus", symbol: "−" },
+  { key: "edit", label: "Edit", symbol: "✎" },
+  { key: "save", label: "Save", symbol: "💾" },
+  { key: "refresh", label: "Refresh", symbol: "↻" },
+  { key: "sync", label: "Sync", symbol: "⟳" },
+  { key: "filter", label: "Filter", symbol: "⛃" },
+  { key: "sort", label: "Sort", symbol: "⇅" },
+  { key: "link", label: "Link", symbol: "🔗" },
+  { key: "external", label: "External", symbol: "↗" },
+  { key: "download", label: "Download", symbol: "⬇" },
+  { key: "upload", label: "Upload", symbol: "⬆" },
+  { key: "share", label: "Share", symbol: "⤴" },
+  { key: "mail", label: "Mail", symbol: "✉" },
+  { key: "calendar", label: "Calendar", symbol: "📅" },
+  { key: "clock", label: "Clock", symbol: "🕒" },
+  { key: "phone", label: "Phone", symbol: "☎" },
+  { key: "chat", label: "Chat", symbol: "💬" },
+  { key: "user", label: "User", symbol: "👤" },
+  { key: "users", label: "Users", symbol: "👥" },
+  { key: "group", label: "Group", symbol: "👪" },
+  { key: "lock", label: "Lock", symbol: "🔒" },
+  { key: "unlock", label: "Unlock", symbol: "🔓" },
+  { key: "key", label: "Key", symbol: "🔑" },
+  { key: "shield", label: "Shield", symbol: "🛡" },
+  { key: "bell", label: "Bell", symbol: "🔔" },
+  { key: "bookmark", label: "Bookmark", symbol: "🔖" },
+  { key: "star", label: "Star", symbol: "★" },
+  { key: "flag", label: "Flag", symbol: "⚑" },
+  { key: "pin", label: "Pin", symbol: "📌" },
+  { key: "chart_bar", label: "Chart Bar", symbol: "📊" },
+  { key: "chart_line", label: "Chart Line", symbol: "📈" },
+  { key: "chart_down", label: "Chart Down", symbol: "📉" },
+  { key: "chart_pie", label: "Chart Pie", symbol: "◔" },
+  { key: "chart_area", label: "Chart Area", symbol: "▰" },
+  { key: "target", label: "Target", symbol: "◎" },
+  { key: "lightning", label: "Lightning", symbol: "⚡" },
+  { key: "rocket", label: "Rocket", symbol: "🚀" },
+  { key: "globe", label: "Globe", symbol: "🌐" },
+  { key: "map", label: "Map", symbol: "🗺" },
+  { key: "location", label: "Location", symbol: "📍" },
+  { key: "compass", label: "Compass", symbol: "🧭" },
+  { key: "camera", label: "Camera", symbol: "📷" },
+  { key: "image", label: "Image", symbol: "🖼" },
+  { key: "video", label: "Video", symbol: "🎬" },
+  { key: "play", label: "Play", symbol: "▶" },
+  { key: "pause", label: "Pause", symbol: "⏸" },
+  { key: "stop", label: "Stop", symbol: "⏹" },
+  { key: "arrow_left", label: "Arrow Left", symbol: "←" },
+  { key: "arrow_right", label: "Arrow Right", symbol: "→" },
+  { key: "arrow_up", label: "Arrow Up", symbol: "↑" },
+  { key: "arrow_down", label: "Arrow Down", symbol: "↓" },
+  { key: "chevron_left", label: "Chevron Left", symbol: "‹" },
+  { key: "chevron_right", label: "Chevron Right", symbol: "›" },
+  { key: "chevron_up", label: "Chevron Up", symbol: "˄" },
+  { key: "chevron_down", label: "Chevron Down", symbol: "˅" },
+  { key: "back", label: "Back", symbol: "↩" },
+  { key: "forward", label: "Forward", symbol: "↪" },
+  { key: "undo", label: "Undo", symbol: "↶" },
+  { key: "redo", label: "Redo", symbol: "↷" },
+  { key: "print", label: "Print", symbol: "🖨" },
+  { key: "clipboard", label: "Clipboard", symbol: "📋" },
+  { key: "note", label: "Note", symbol: "📝" },
+  { key: "code", label: "Code", symbol: "⌨" },
+  { key: "formula", label: "Formula", symbol: "∑" },
+  { key: "function", label: "Function", symbol: "ƒ" },
+  { key: "calculator", label: "Calculator", symbol: "🧮" },
+  { key: "cube", label: "Cube", symbol: "⬢" },
+  { key: "diamond", label: "Diamond", symbol: "◆" },
+  { key: "circle", label: "Circle", symbol: "●" },
+  { key: "square", label: "Square", symbol: "■" },
+  { key: "triangle", label: "Triangle", symbol: "▲" },
+  { key: "hexagon", label: "Hexagon", symbol: "⬡" },
+  { key: "eye", label: "Eye", symbol: "👁" },
+  { key: "hide", label: "Hide", symbol: "🙈" },
+  { key: "package", label: "Package", symbol: "📦" },
+  { key: "truck", label: "Truck", symbol: "🚚" },
+  { key: "money", label: "Money", symbol: "💲" },
+  { key: "briefcase", label: "Briefcase", symbol: "💼" },
+  { key: "building", label: "Building", symbol: "🏢" },
+  { key: "spark", label: "Spark", symbol: "✦" },
+  { key: "magic", label: "Magic", symbol: "✨" },
+];
+
+const EMOJI_SURROGATE_PATTERN = /[\uD800-\uDBFF][\uDC00-\uDFFF]/;
+
+const tokenizeIconSearchTerms = (value: string): string[] =>
+  value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .split(" ")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 1);
+
+const ICON_KEYWORD_OVERRIDES: Record<string, string[]> = {
+  none: ["clear", "remove", "empty"],
+  home: ["house", "start"],
+  home_alt: ["house", "start"],
+  data: ["analytics", "insights", "grid", "sheet"],
+  controls: ["button", "action", "command"],
+  reports: ["chart", "graph", "analytics"],
+  table: ["grid", "cells"],
+  database: ["store", "storage", "records"],
+  settings: ["preferences", "options", "config"],
+  tools: ["build", "configure"],
+  help: ["support", "question"],
+  info: ["details", "about"],
+  warning: ["alert", "caution", "error"],
+  check: ["success", "done", "confirm"],
+  close: ["cancel", "dismiss"],
+  edit: ["write", "compose", "text"],
+  save: ["store", "persist"],
+  refresh: ["reload", "update"],
+  sync: ["refresh", "reload", "update"],
+  filter: ["funnel", "criteria"],
+  sort: ["order", "rank"],
+  link: ["url", "hyperlink", "connect"],
+  external: ["url", "open", "launch"],
+  mail: ["email", "message"],
+  users: ["people", "team"],
+  group: ["people", "team"],
+  chart_bar: ["report", "analytics", "graph"],
+  chart_line: ["report", "analytics", "graph"],
+  chart_down: ["report", "analytics", "graph"],
+  chart_pie: ["report", "analytics", "graph"],
+  chart_area: ["report", "analytics", "graph"],
+  formula: ["math", "function", "fx"],
+  function: ["formula", "math", "fx"],
+  calculator: ["math", "formula"],
+  eye: ["view", "preview", "show"],
+  hide: ["view", "preview", "show"],
 };
+
+function fallbackIconSymbolFromKey(key: string): string {
+  const normalized = key.toLowerCase();
+  if (normalized.includes("none")) return "";
+  if (normalized.includes("arrow_left")) return "←";
+  if (normalized.includes("arrow_right")) return "→";
+  if (normalized.includes("arrow_up")) return "↑";
+  if (normalized.includes("arrow_down")) return "↓";
+  if (normalized.includes("chevron_left")) return "‹";
+  if (normalized.includes("chevron_right")) return "›";
+  if (normalized.includes("chevron_up")) return "˄";
+  if (normalized.includes("chevron_down")) return "˅";
+  if (normalized.includes("home")) return "⌂";
+  if (normalized.includes("dashboard") || normalized.includes("data") || normalized.includes("table") || normalized.includes("database")) return "▦";
+  if (normalized.includes("report") || normalized.includes("chart")) return "▤";
+  if (normalized.includes("document") || normalized.includes("file") || normalized.includes("folder") || normalized.includes("template")) return "▣";
+  if (normalized.includes("search")) return "⌕";
+  if (normalized.includes("setting") || normalized.includes("gear") || normalized.includes("tool") || normalized.includes("wrench")) return "⚙";
+  if (normalized.includes("help")) return "?";
+  if (normalized.includes("info")) return "ℹ";
+  if (normalized.includes("warning")) return "⚠";
+  if (normalized.includes("check")) return "✓";
+  if (normalized.includes("close")) return "✕";
+  if (normalized.includes("plus")) return "+";
+  if (normalized.includes("minus")) return "−";
+  if (normalized.includes("edit")) return "✎";
+  if (normalized.includes("save")) return "⎙";
+  if (normalized.includes("refresh") || normalized.includes("sync")) return "↻";
+  if (normalized.includes("filter")) return "≣";
+  if (normalized.includes("sort")) return "⇅";
+  if (normalized.includes("link") || normalized.includes("external") || normalized.includes("share")) return "↗";
+  if (normalized.includes("download")) return "⬇";
+  if (normalized.includes("upload")) return "⬆";
+  if (normalized.includes("mail")) return "✉";
+  if (normalized.includes("calendar") || normalized.includes("clock")) return "◷";
+  if (normalized.includes("phone")) return "☎";
+  if (normalized.includes("chat")) return "☰";
+  if (normalized.includes("user") || normalized.includes("group")) return "◎";
+  if (normalized.includes("lock")) return normalized.includes("unlock") ? "○" : "●";
+  if (normalized.includes("key")) return "✦";
+  if (normalized.includes("shield")) return "⬟";
+  if (normalized.includes("bell")) return "◉";
+  if (normalized.includes("bookmark")) return "▮";
+  if (normalized.includes("star")) return "★";
+  if (normalized.includes("flag")) return "⚑";
+  if (normalized.includes("pin")) return "•";
+  if (normalized.includes("target")) return "◎";
+  if (normalized.includes("lightning")) return "⚡";
+  if (normalized.includes("rocket")) return "▲";
+  if (normalized.includes("globe")) return "◌";
+  if (normalized.includes("map")) return "▧";
+  if (normalized.includes("location") || normalized.includes("compass")) return "⌖";
+  if (normalized.includes("camera")) return "◫";
+  if (normalized.includes("image")) return "▣";
+  if (normalized.includes("video") || normalized.includes("play")) return "▶";
+  if (normalized.includes("pause")) return "⏸";
+  if (normalized.includes("stop")) return "⏹";
+  if (normalized.includes("back")) return "↩";
+  if (normalized.includes("forward")) return "↪";
+  if (normalized.includes("undo")) return "↶";
+  if (normalized.includes("redo")) return "↷";
+  if (normalized.includes("print")) return "⎙";
+  if (normalized.includes("clipboard")) return "▣";
+  if (normalized.includes("note")) return "✎";
+  if (normalized.includes("code")) return "⌨";
+  if (normalized.includes("formula")) return "∑";
+  if (normalized.includes("function")) return "ƒ";
+  if (normalized.includes("calculator")) return "∑";
+  if (normalized.includes("cube")) return "⬢";
+  if (normalized.includes("diamond")) return "◆";
+  if (normalized.includes("circle")) return "●";
+  if (normalized.includes("square")) return "■";
+  if (normalized.includes("triangle")) return "▲";
+  if (normalized.includes("hexagon")) return "⬡";
+  if (normalized.includes("eye")) return "◉";
+  if (normalized.includes("hide")) return "◌";
+  if (normalized.includes("package") || normalized.includes("truck") || normalized.includes("briefcase") || normalized.includes("building")) return "▣";
+  if (normalized.includes("money")) return "$";
+  if (normalized.includes("spark") || normalized.includes("magic")) return "✦";
+  return "•";
+}
+
+function toExcelSafeIconSymbol(key: string, symbol: string): string {
+  const trimmed = symbol.trim();
+  if (!trimmed) {
+    return "";
+  }
+  if (!EMOJI_SURROGATE_PATTERN.test(trimmed)) {
+    return trimmed;
+  }
+  return fallbackIconSymbolFromKey(key);
+}
+
+function buildShapeBuilderIconKeywords(option: Omit<ShapeBuilderIconOption, "keywords">): string[] {
+  const set = new Set<string>([
+    ...tokenizeIconSearchTerms(option.key),
+    ...tokenizeIconSearchTerms(option.label),
+    ...(ICON_KEYWORD_OVERRIDES[option.key] ?? []),
+  ]);
+  return Array.from(set).sort((left, right) => left.localeCompare(right));
+}
+
+function normalizeFluentIconName(rawName: string): string {
+  return rawName
+    .replace(/\d+(Filled|Regular)$/i, "")
+    .replace(/(Filled|Regular)$/i, "")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .replace(/_/g, " ")
+    .toLowerCase()
+    .trim();
+}
+
+function loadFluentIconNameCatalog(): string[] {
+  try {
+    const regular = require("../../node_modules/@fluentui/react-icons/lib-cjs/utils/fonts/FluentSystemIcons-Regular.json") as Record<
+      string,
+      number
+    >;
+    const resizable = require("../../node_modules/@fluentui/react-icons/lib-cjs/utils/fonts/FluentSystemIcons-Resizable.json") as Record<
+      string,
+      number
+    >;
+    const unique = new Set<string>();
+    [...Object.keys(regular), ...Object.keys(resizable)].forEach((name) => {
+      const normalized = normalizeFluentIconName(name);
+      if (normalized) {
+        unique.add(normalized);
+      }
+    });
+    return Array.from(unique).sort((left, right) => left.localeCompare(right));
+  } catch {
+    return [];
+  }
+}
+
+export const SHAPE_BUILDER_ICON_OPTIONS: ShapeBuilderIconOption[] = RAW_SHAPE_BUILDER_ICON_OPTIONS.map((option) => ({
+  ...option,
+  symbol: toExcelSafeIconSymbol(option.key, option.symbol),
+  keywords: buildShapeBuilderIconKeywords(option),
+}));
+
+export const FLUENT_ICON_NAME_CATALOG: string[] = loadFluentIconNameCatalog();
+
+const SHAPE_BUILDER_ICON_SYMBOLS: Record<string, string> = SHAPE_BUILDER_ICON_OPTIONS.reduce(
+  (accumulator, option) => {
+    accumulator[option.key] = option.symbol;
+    return accumulator;
+  },
+  {} as Record<string, string>
+);
 
 interface ShapeBuilderMetadata {
   iconKey: string;
@@ -1478,7 +1854,7 @@ const DEFAULT_SHAPE_BUILDER_METADATA: ShapeBuilderMetadata = {
   linkType: "None",
   internalDestinationId: "",
   externalUrl: "",
-  effect: "Shadow",
+  effect: "None",
 };
 
 function sanitizeHexColor(value: string, fallback: string): string {
@@ -1530,35 +1906,11 @@ async function syncShapeBuilderShadow(
   shadowOrNull.load("name");
   await context.sync();
 
-  if (record.effect !== "Shadow") {
-    if (!shadowOrNull.isNullObject) {
-      shadowOrNull.delete();
-    }
-    return;
+  // Excel JavaScript API doesn't expose shape shadow preset APIs.
+  // Remove any legacy synthetic "shadow clone" so we don't create duplicate shapes.
+  if (!shadowOrNull.isNullObject) {
+    shadowOrNull.delete();
   }
-
-  let shadow = shadowOrNull as Excel.Shape;
-  if (shadowOrNull.isNullObject) {
-    if (record.shapeType === "TextBox") {
-      shadow = sheet.shapes.addGeometricShape(Excel.GeometricShapeType.rectangle);
-    } else {
-      shadow = sheet.shapes.addGeometricShape(toGeometricShapeType(record.shapeType));
-    }
-    shadow.name = shadowName;
-  }
-
-  shadow.left = Math.max(0, record.left + 4);
-  shadow.top = Math.max(0, record.top + 4);
-  shadow.width = Math.max(2, record.width);
-  shadow.height = Math.max(2, record.height);
-  shadow.fill.setSolidColor("#111827");
-  shadow.fill.transparency = record.fillColor === NO_FILL_COLOR_TOKEN ? 0.55 : 0.72;
-  shadow.lineFormat.visible = false;
-  shadow.textFrame.textRange.text = "";
-  shadow.altTextTitle = "";
-  shadow.altTextDescription = "";
-  shadow.placement = Excel.Placement.oneCell;
-  shadow.setZOrder("SendBackward");
 }
 
 function normalizeShapeBuilderLinkType(value: string): ShapeBuilderLinkType {
@@ -1572,34 +1924,84 @@ function normalizeShapeBuilderEffect(value: string): ShapeBuilderEffect {
   return value === "Shadow" ? "Shadow" : "None";
 }
 
+function normalizeShapeBuilderTextHorizontalAlignment(value: string): ShapeBuilderTextHorizontalAlignment {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "center") {
+    return "Center";
+  }
+  if (normalized === "right") {
+    return "Right";
+  }
+  return "Left";
+}
+
+function normalizeShapeBuilderTextVerticalAlignment(value: string): ShapeBuilderTextVerticalAlignment {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "top") {
+    return "Top";
+  }
+  if (normalized === "bottom") {
+    return "Bottom";
+  }
+  return "Middle";
+}
+
 function getShapeBuilderIconSymbol(iconKey: string): string {
   const key = iconKey.trim().toLowerCase();
+  if (key.startsWith("custom:")) {
+    const encoded = iconKey.trim().slice("custom:".length);
+    try {
+      return decodeURIComponent(encoded);
+    } catch {
+      return encoded;
+    }
+  }
   return SHAPE_BUILDER_ICON_SYMBOLS[key] ?? "";
 }
 
 function stripShapeBuilderIcon(displayText: string, iconKey: string): string {
   const symbol = getShapeBuilderIconSymbol(iconKey);
-  const text = displayText.trim();
   if (!symbol) {
-    return text;
+    return displayText;
   }
   const prefix = `${symbol} `;
-  if (text.startsWith(prefix)) {
-    return text.slice(prefix.length).trim();
+  if (displayText.startsWith(prefix)) {
+    return displayText.slice(prefix.length);
   }
-  if (text === symbol) {
+  if (displayText === symbol) {
     return "";
   }
-  return text;
+  if (displayText.startsWith(symbol)) {
+    return displayText.slice(symbol.length);
+  }
+  return displayText;
 }
 
 function buildShapeBuilderDisplayText(iconKey: string, text: string): string {
   const symbol = getShapeBuilderIconSymbol(iconKey);
-  const label = text.trim();
+  const label = text ?? "";
   if (!symbol) {
     return label;
   }
-  return label ? `${symbol} ${label}` : symbol;
+  if (!label) {
+    return symbol;
+  }
+  return /^\s/.test(label) ? `${symbol}${label}` : `${symbol} ${label}`;
+}
+
+function getShapeBuilderDisplayTextOffset(displayText: string, iconKey: string): number {
+  const symbol = getShapeBuilderIconSymbol(iconKey);
+  if (!symbol) {
+    return 0;
+  }
+  const prefixedWithSpace = `${symbol} `;
+  if (displayText.startsWith(prefixedWithSpace)) {
+    return prefixedWithSpace.length;
+  }
+  if (displayText.startsWith(symbol)) {
+    return symbol.length;
+  }
+  return 0;
 }
 
 function parseShapeBuilderMetadata(titleText: string, descriptionText: string): ShapeBuilderMetadata {
@@ -1682,7 +2084,7 @@ function applyShapeBuilderMetadata(shape: Excel.Shape, metadataInput: ShapeBuild
 
 function loadShapeBuilderProperties(shape: Excel.Shape): void {
   shape.load(
-    "id,name,type,geometricShapeType,left,top,zOrderPosition,width,height,altTextDescription,altTextTitle,fill/foregroundColor,fill/type,lineFormat/color,lineFormat/weight,textFrame/textRange/text,textFrame/textRange/font/color,textFrame/textRange/font/size,textFrame/textRange/font/bold,textFrame/textRange/font/italic"
+    "id,name,type,geometricShapeType,left,top,zOrderPosition,width,height,altTextDescription,altTextTitle,fill/foregroundColor,fill/type,lineFormat/color,lineFormat/weight,textFrame/horizontalAlignment,textFrame/verticalAlignment,textFrame/textRange/text,textFrame/textRange/font/color,textFrame/textRange/font/size,textFrame/textRange/font/bold,textFrame/textRange/font/italic"
   );
 }
 
@@ -1721,6 +2123,8 @@ function buildShapeBuilderRecord(sheetName: string, shape: Excel.Shape): ShapeBu
     fontSize: asNumber(shape.textFrame.textRange.font.size, 16),
     bold: asBoolean(shape.textFrame.textRange.font.bold, true),
     italic: asBoolean(shape.textFrame.textRange.font.italic, false),
+    textHorizontalAlignment: normalizeShapeBuilderTextHorizontalAlignment(asString(shape.textFrame.horizontalAlignment)),
+    textVerticalAlignment: normalizeShapeBuilderTextVerticalAlignment(asString(shape.textFrame.verticalAlignment)),
     linkType: metadata.linkType,
     internalDestinationId: metadata.internalDestinationId,
     externalUrl: metadata.externalUrl,
@@ -1807,8 +2211,12 @@ export async function createShapeBuilderShape(request: CreateShapeBuilderShapeRe
     shape.textFrame.textRange.font.size = Math.max(8, asNumber(request.fontSize, 16));
     shape.textFrame.textRange.font.bold = asBoolean(request.bold, true);
     shape.textFrame.textRange.font.italic = asBoolean(request.italic, false);
-    shape.textFrame.horizontalAlignment = "Left" as unknown as Excel.ShapeTextHorizontalAlignment;
-    shape.textFrame.verticalAlignment = "Middle" as unknown as Excel.ShapeTextVerticalAlignment;
+    shape.textFrame.horizontalAlignment = normalizeShapeBuilderTextHorizontalAlignment(
+      asString(request.textHorizontalAlignment, "Left")
+    ) as unknown as Excel.ShapeTextHorizontalAlignment;
+    shape.textFrame.verticalAlignment = normalizeShapeBuilderTextVerticalAlignment(
+      asString(request.textVerticalAlignment, "Middle")
+    ) as unknown as Excel.ShapeTextVerticalAlignment;
     shape.textFrame.textRange.text = buildShapeBuilderDisplayText(request.iconKey, request.text);
     shape.placement = Excel.Placement.oneCell;
 
@@ -1877,6 +2285,12 @@ export async function updateShapeBuilderShape(
     shape.textFrame.textRange.font.size = Math.max(8, asNumber(updates.fontSize, existing.fontSize));
     shape.textFrame.textRange.font.bold = asBoolean(updates.bold, existing.bold);
     shape.textFrame.textRange.font.italic = asBoolean(updates.italic, existing.italic);
+    shape.textFrame.horizontalAlignment = normalizeShapeBuilderTextHorizontalAlignment(
+      asString(updates.textHorizontalAlignment, existing.textHorizontalAlignment)
+    ) as unknown as Excel.ShapeTextHorizontalAlignment;
+    shape.textFrame.verticalAlignment = normalizeShapeBuilderTextVerticalAlignment(
+      asString(updates.textVerticalAlignment, existing.textVerticalAlignment)
+    ) as unknown as Excel.ShapeTextVerticalAlignment;
 
     const nextMetadata: ShapeBuilderMetadata = {
       iconKey: asString(updates.iconKey, existing.iconKey).trim() || "none",
@@ -1905,6 +2319,51 @@ export async function updateShapeBuilderShape(
       fillColor: nextFillColor,
       effect: nextMetadata.effect,
     });
+
+    loadShapeBuilderProperties(shape);
+    await context.sync();
+    return buildShapeBuilderRecord(sheetName, shape);
+  });
+}
+
+export async function formatShapeBuilderTextSelection(
+  sheetName: string,
+  shapeName: string,
+  selectionStart: number,
+  selectionLength: number,
+  updates: ShapeBuilderTextSelectionFormatRequest
+): Promise<ShapeBuilderShapeRecord> {
+  return Excel.run(async (context) => {
+    const sheet = context.workbook.worksheets.getItem(sheetName);
+    const shape = sheet.shapes.getItem(shapeName);
+    loadShapeBuilderProperties(shape);
+    await context.sync();
+
+    const existing = buildShapeBuilderRecord(sheetName, shape);
+    const textLength = existing.text.length;
+    const safeStart = Math.min(Math.max(Math.floor(asNumber(selectionStart, 0)), 0), textLength);
+    const requestedLength = Math.max(Math.floor(asNumber(selectionLength, 0)), 0);
+    const safeLength = Math.min(requestedLength, Math.max(textLength - safeStart, 0));
+    if (safeLength <= 0) {
+      return existing;
+    }
+
+    const displayText = asString(shape.textFrame.textRange.text);
+    const displayOffset = getShapeBuilderDisplayTextOffset(displayText, existing.iconKey);
+    const displayStart = displayOffset + safeStart;
+    const selection = shape.textFrame.textRange.getSubstring(displayStart, safeLength);
+
+    if (typeof updates.bold === "boolean") {
+      selection.font.bold = updates.bold;
+    }
+    if (typeof updates.italic === "boolean") {
+      selection.font.italic = updates.italic;
+    }
+    if (typeof updates.color === "string" && updates.color.trim()) {
+      selection.font.color = sanitizeHexColor(updates.color, existing.fontColor);
+    }
+
+    await context.sync();
 
     loadShapeBuilderProperties(shape);
     await context.sync();
@@ -1957,8 +2416,9 @@ export async function duplicateShapeBuilderShape(
     duplicated.textFrame.textRange.font.size = source.fontSize;
     duplicated.textFrame.textRange.font.bold = source.bold;
     duplicated.textFrame.textRange.font.italic = source.italic;
-    duplicated.textFrame.horizontalAlignment = "Left" as unknown as Excel.ShapeTextHorizontalAlignment;
-    duplicated.textFrame.verticalAlignment = "Middle" as unknown as Excel.ShapeTextVerticalAlignment;
+    duplicated.textFrame.horizontalAlignment =
+      source.textHorizontalAlignment as unknown as Excel.ShapeTextHorizontalAlignment;
+    duplicated.textFrame.verticalAlignment = source.textVerticalAlignment as unknown as Excel.ShapeTextVerticalAlignment;
     duplicated.textFrame.textRange.text = buildShapeBuilderDisplayText(source.iconKey, source.text);
     duplicated.placement = Excel.Placement.oneCell;
     applyShapeBuilderMetadata(duplicated, {

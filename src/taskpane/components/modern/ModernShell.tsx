@@ -41,11 +41,12 @@ interface NavItem {
 
 const useStyles = makeStyles({
   root: {
-    minHeight: "100vh",
+    height: "100vh",
     backgroundColor: MODERN_TOKENS.colorBg,
     color: MODERN_TOKENS.colorText,
     display: "grid",
     gridTemplateRows: "56px 1fr",
+    overflow: "hidden",
   },
   header: {
     height: "56px",
@@ -62,6 +63,7 @@ const useStyles = makeStyles({
     display: "grid",
     gridTemplateColumns: "auto 1fr",
     minHeight: 0,
+    overflow: "hidden",
   },
   navRail: {
     borderRight: `1px solid ${MODERN_TOKENS.colorBorder}`,
@@ -70,6 +72,11 @@ const useStyles = makeStyles({
     display: "grid",
     alignContent: "start",
     gap: "8px",
+    position: "sticky",
+    top: 0,
+    alignSelf: "start",
+    height: "100%",
+    overflowY: "auto",
     transition: "width 150ms ease",
   },
   navButton: {
@@ -98,7 +105,8 @@ const useStyles = makeStyles({
   navLabelCollapsed: { display: "none" },
   content: {
     padding: "24px",
-    overflow: "auto",
+    overflowY: "auto",
+    overflowX: "hidden",
     minHeight: 0,
   },
   menuPopover: {

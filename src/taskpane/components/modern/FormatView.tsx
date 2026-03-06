@@ -1,18 +1,39 @@
 import * as React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Input, Text, makeStyles } from "@fluentui/react-components";
-import { Add20Regular, ArrowClockwise20Regular } from "@fluentui/react-icons";
+import {
+  Add20Regular,
+  ArrowClockwise20Regular,
+  ChevronDown20Regular,
+  ChevronUp20Regular,
+  Emoji20Regular,
+  EyeOff20Regular,
+  Eyedropper20Regular,
+  Grid20Regular,
+  Pin20Regular,
+  PinOff20Regular,
+  SlideHide20Regular,
+  TableFreezeColumn20Regular,
+  TableFreezeColumnAndRow20Regular,
+  TableFreezeRow20Regular,
+  TableResizeColumn20Regular,
+  TableResizeRow20Regular,
+  TextAlignCenter20Regular,
+  TextAlignLeft20Regular,
+  TextAlignRight20Regular,
+  TextBold20Regular,
+  TextItalic20Regular,
+} from "@fluentui/react-icons";
 import {
   ApplyNavigationTemplateRequest,
-  CellStylePreset,
   CreateShapeBuilderShapeRequest,
   InsertableShapeType,
   NavigationDestinationOption,
   ShapeBuilderEffect,
   ShapeBuilderShapeRecord,
+  ShapeBuilderTextSelectionFormatRequest,
   SheetFormatRecord,
   activateNavigationDestination,
-  applyCellStylePreset,
   applyNavigationTemplate,
   applySheetFormat,
   applySheetFormatToAllSheets,
@@ -21,9 +42,14 @@ import {
   deleteSheetFormat,
   deleteShapeBuilderShape,
   duplicateShapeBuilderShape,
+  formatShapeBuilderTextSelection,
   freezeFirstColumn,
   freezeTopRow,
+  FLUENT_ICON_NAME_CATALOG,
+  hideActiveSheet,
+  hideActiveSheetVeryHidden,
   listNavigationDestinations,
+  SHAPE_BUILDER_ICON_OPTIONS,
   listWorkbookThemeColors,
   listShapeBuilderShapes,
   listSheetFormats,
@@ -31,6 +57,8 @@ import {
   openFormatEditorPopout,
   recaptureSheetFormatFromSelection,
   refreshPivotTables,
+  setSelectionColumnWidth,
+  setSelectionRowHeight,
   toggleGridlines,
   unfreezePanes,
   updateShapeBuilderShape,
@@ -44,7 +72,12 @@ interface FormatViewProps {
 
 type EditorTab = "shape" | "style" | "size" | "link";
 type ShapeLinkFilter = "all" | "none" | "internal" | "external";
-type StyleBaseline = Pick<ShapeBuilderShapeRecord, "fillColor" | "outlineColor" | "outlineWidth" | "effect">;
+type UtilityMenu = "view" | "freeze" | "data" | "sheet" | "sizing";
+type StyleColorTarget = "fill" | "outline" | "font";
+type StyleBaseline = Pick<
+  ShapeBuilderShapeRecord,
+  "fillColor" | "outlineColor" | "outlineWidth" | "fontColor" | "fontSize" | "bold" | "italic" | "effect"
+>;
 
 const SHAPE_TYPES: Array<{ value: InsertableShapeType; label: string }> = [
   { value: "RoundedRectangle", label: "Rounded Rectangle" },
@@ -54,15 +87,12 @@ const SHAPE_TYPES: Array<{ value: InsertableShapeType; label: string }> = [
   { value: "Diamond", label: "Diamond" },
   { value: "Oval", label: "Oval" },
 ];
-
-const ICONS = [
-  { key: "none", label: "None", symbol: "-" },
-  { key: "home", label: "Home", symbol: "⌂" },
-  { key: "data", label: "Data", symbol: "▦" },
-  { key: "controls", label: "Controls", symbol: "⌘" },
-  { key: "reports", label: "Reports", symbol: "▤" },
-  { key: "settings", label: "Settings", symbol: "⚙" },
-  { key: "help", label: "Help", symbol: "?" },
+const UTILITY_MENU_ITEMS: Array<{ key: UtilityMenu; label: string }> = [
+  { key: "view", label: "View" },
+  { key: "freeze", label: "Freeze" },
+  { key: "data", label: "Data" },
+  { key: "sheet", label: "Sheet" },
+  { key: "sizing", label: "Sizing" },
 ];
 
 const DEFAULT_THEME_COLORS = [
@@ -76,18 +106,31 @@ const DEFAULT_THEME_COLORS = [
   "#8B97A5",
   "#1E2B3D",
 ];
-
-const STYLE_PRESETS: Array<{ preset: CellStylePreset; label: string }> = [
-  { preset: "Input Cell", label: "Input" },
-  { preset: "Parameter Cell", label: "Parameter" },
-  { preset: "Header", label: "Header" },
-  { preset: "Subheader", label: "Subheader" },
-];
+const CUSTOM_ICON_KEY_PREFIX = "custom:";
 
 const normalizeError = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 const isHexColor = (value: string) => /^#[0-9a-f]{6}$/i.test(value);
 const toUpperHexOrFallback = (value: string, fallback: string) => (isHexColor(value) ? value.toUpperCase() : fallback);
+const decodeCustomIconValue = (iconKey: string): string => {
+  if (!iconKey.toLowerCase().startsWith(CUSTOM_ICON_KEY_PREFIX)) {
+    return "";
+  }
+  const encoded = iconKey.slice(CUSTOM_ICON_KEY_PREFIX.length);
+  try {
+    return decodeURIComponent(encoded);
+  } catch {
+    return encoded;
+  }
+};
+const encodeCustomIconKey = (icon: string): string => `${CUSTOM_ICON_KEY_PREFIX}${encodeURIComponent(icon)}`;
+const tokenizeSearchValue = (value: string): string[] =>
+  value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .split(" ")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 1);
 
 interface EyeDropperResult {
   sRGBHex: string;
@@ -163,6 +206,65 @@ const styles = makeStyles({
     display: "grid",
     gap: "10px",
   },
+  utilityDock: {
+    borderRadius: "10px",
+    border: `1px solid ${MODERN_TOKENS.colorBorder}`,
+    backgroundColor: "#FFFFFF",
+    padding: "6px 8px",
+    display: "grid",
+    gap: "6px",
+  },
+  utilityDockCollapsed: {
+    padding: "4px 8px",
+    gap: "4px",
+  },
+  utilityPinnedCard: {
+    position: "sticky",
+    top: 0,
+    zIndex: 6,
+    boxShadow: "0 2px 8px rgba(17,24,39,0.08)",
+  },
+  utilityFloatingCard: { boxShadow: "0 1px 4px rgba(17,24,39,0.06)" },
+  utilityHeaderRow: {
+    display: "grid",
+    gridTemplateColumns: "auto 1fr auto",
+    alignItems: "center",
+    gap: "6px",
+  },
+  utilityHeadingWrap: { display: "inline-flex", alignItems: "center", gap: "6px", minWidth: 0 },
+  utilityTitleSmall: {
+    fontSize: "10px",
+    lineHeight: "12px",
+    fontWeight: 700,
+    letterSpacing: "0.02em",
+    textTransform: "uppercase",
+    color: MODERN_TOKENS.colorTextMuted,
+    whiteSpace: "nowrap",
+  },
+  utilityActivePill: {
+    borderRadius: "999px",
+    border: `1px solid ${MODERN_TOKENS.colorBorder}`,
+    backgroundColor: "#F8FAFC",
+    color: MODERN_TOKENS.colorTextMuted,
+    fontSize: "10px",
+    lineHeight: "12px",
+    fontWeight: 700,
+    padding: "2px 6px",
+    whiteSpace: "nowrap",
+  },
+  utilityHeaderActions: { display: "inline-flex", alignItems: "center", gap: "6px" },
+  utilityHeaderBtn: {
+    width: "24px",
+    height: "24px",
+    borderRadius: "6px",
+    border: `1px solid ${MODERN_TOKENS.colorBorder}`,
+    backgroundColor: "#FFFFFF",
+    color: MODERN_TOKENS.colorTextMuted,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    cursor: "pointer",
+  },
   row: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", flexWrap: "wrap" },
   title: { fontSize: "13px", fontWeight: 700, textTransform: "uppercase", color: MODERN_TOKENS.colorTextMuted },
   muted: { fontSize: "12px", color: MODERN_TOKENS.colorTextMuted },
@@ -229,8 +331,58 @@ const styles = makeStyles({
   swatches: { display: "grid", gridTemplateColumns: "repeat(6,minmax(0,1fr))", gap: "8px" },
   swatch: { height: "34px", borderRadius: "8px", border: `1px solid ${MODERN_TOKENS.colorBorder}`, cursor: "pointer" },
   swatchActive: { boxShadow: "inset 0 0 0 2px #FFFFFF, 0 0 0 2px #4679C7" },
-  colorToolRow: { display: "flex", gap: "8px", flexWrap: "wrap" },
-  noFillBtnActive: { backgroundColor: "#EFF4FE", border: "1px solid #7EA5E1" },
+  colorCompactGroup: { borderRadius: "10px", border: `1px solid ${MODERN_TOKENS.colorBorder}`, backgroundColor: "#FFFFFF" },
+  colorCompactHeader: {
+    display: "grid",
+    gridTemplateColumns: "1fr auto",
+    gap: "8px",
+    alignItems: "center",
+    padding: "8px",
+  },
+  colorCurrentBtn: {
+    borderRadius: "8px",
+    border: `1px solid ${MODERN_TOKENS.colorBorder}`,
+    backgroundColor: "#F8FAFC",
+    color: MODERN_TOKENS.colorText,
+    padding: "7px 10px",
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "8px",
+    minHeight: "34px",
+  },
+  colorCurrentMain: { display: "flex", alignItems: "center", gap: "8px", minWidth: 0 },
+  colorChip: { width: "22px", height: "22px", borderRadius: "6px", border: `1px solid ${MODERN_TOKENS.colorBorder}`, flexShrink: 0 },
+  colorCurrentLabel: { fontSize: "12px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  iconOnlyBtn: {
+    width: "34px",
+    height: "34px",
+    borderRadius: "8px",
+    border: `1px solid ${MODERN_TOKENS.colorBorder}`,
+    backgroundColor: "#FFFFFF",
+    color: MODERN_TOKENS.colorText,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    cursor: "pointer",
+  },
+  iconOnlyBtnActive: { backgroundColor: "#EFF4FE", border: "1px solid #7EA5E1", color: "#173A70" },
+  colorCompactBody: { borderTop: `1px solid ${MODERN_TOKENS.colorBorder}`, padding: "8px", display: "grid", gap: "8px" },
+  noFillSwatch: {
+    borderRadius: "8px",
+    border: `1px dashed ${MODERN_TOKENS.colorBorder}`,
+    background: "repeating-linear-gradient(-45deg,#FFFFFF,#FFFFFF 6px,#EEF2F6 6px,#EEF2F6 12px)",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: "11px",
+    color: MODERN_TOKENS.colorTextMuted,
+    cursor: "pointer",
+    height: "34px",
+  },
+  toggleGroup: { display: "flex", gap: "8px", flexWrap: "wrap" },
+  toggleBtnActive: { backgroundColor: "#EFF4FE", border: "1px solid #7EA5E1", color: "#173A70" },
   colorInput: {
     width: "100%",
     height: "36px",
@@ -240,9 +392,53 @@ const styles = makeStyles({
     backgroundColor: "#FFFFFF",
     cursor: "pointer",
   },
-  iconGrid: { display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: "8px", maxHeight: "170px", overflowY: "auto", border: `1px solid ${MODERN_TOKENS.colorBorder}`, borderRadius: "8px", padding: "8px" },
+  iconGrid: { display: "grid", gridTemplateColumns: "repeat(5,minmax(0,1fr))", gap: "8px", maxHeight: "240px", overflowY: "auto", border: `1px solid ${MODERN_TOKENS.colorBorder}`, borderRadius: "8px", padding: "8px" },
   iconBtn: { borderRadius: "8px", border: `1px solid ${MODERN_TOKENS.colorBorder}`, backgroundColor: "#FFFFFF", padding: "8px 6px", display: "grid", justifyItems: "center", gap: "2px", cursor: "pointer", fontSize: "11px" },
   iconActive: { border: "1px solid #7EA5E1", backgroundColor: "#EFF4FE" },
+  textEditorCard: {
+    borderRadius: "10px",
+    border: `1px solid ${MODERN_TOKENS.colorBorder}`,
+    backgroundColor: "#F8FAFC",
+    padding: "8px",
+    display: "grid",
+    gap: "8px",
+  },
+  textToolbar: { display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" },
+  textToolbarDivider: { width: "1px", height: "22px", backgroundColor: MODERN_TOKENS.colorBorder },
+  textToolbarHint: { fontSize: "11px", color: MODERN_TOKENS.colorTextMuted },
+  textArea: {
+    width: "100%",
+    minHeight: "76px",
+    resize: "vertical",
+    boxSizing: "border-box",
+    border: `1px solid ${MODERN_TOKENS.colorBorder}`,
+    borderRadius: "8px",
+    padding: "8px 10px",
+    fontSize: "14px",
+    lineHeight: "20px",
+    fontFamily: "Segoe UI, sans-serif",
+    backgroundColor: "#FFFFFF",
+  },
+  textAreaExpanded: { minHeight: "180px" },
+  compactSelect: {
+    borderRadius: "8px",
+    border: `1px solid ${MODERN_TOKENS.colorBorder}`,
+    backgroundColor: "#FFFFFF",
+    color: MODERN_TOKENS.colorText,
+    height: "34px",
+    padding: "0 10px",
+    fontSize: "12px",
+  },
+  compactColorInput: {
+    width: "34px",
+    height: "34px",
+    borderRadius: "8px",
+    border: `1px solid ${MODERN_TOKENS.colorBorder}`,
+    padding: "2px",
+    backgroundColor: "#FFFFFF",
+    cursor: "pointer",
+  },
+  iconCount: { fontSize: "11px", color: MODERN_TOKENS.colorTextMuted },
   radioRow: { display: "grid", gap: "8px" },
   horizontal: { display: "flex", gap: "8px", flexWrap: "wrap" },
   buttonGrid2: { display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: "8px" },
@@ -265,7 +461,65 @@ const styles = makeStyles({
     alignItems: "center",
     gap: "8px",
   },
-  utilityGrid: { display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: "8px" },
+  utilityMenuBar: {
+    display: "flex",
+    gap: "6px",
+    flexWrap: "wrap",
+    minWidth: 0,
+    justifyContent: "center",
+  },
+  utilityMenuTab: {
+    borderRadius: "999px",
+    border: "1px solid transparent",
+    backgroundColor: "#F8FAFC",
+    color: MODERN_TOKENS.colorTextMuted,
+    padding: "4px 8px",
+    fontSize: "11px",
+    fontWeight: 700,
+    cursor: "pointer",
+    minWidth: "auto",
+    textAlign: "center",
+    lineHeight: "14px",
+    whiteSpace: "nowrap",
+  },
+  utilityMenuTabActive: {
+    backgroundColor: "#FFFFFF",
+    border: `1px solid ${MODERN_TOKENS.colorBorder}`,
+    color: MODERN_TOKENS.colorText,
+    boxShadow: "0 1px 2px rgba(17,24,39,0.08)",
+  },
+  utilityPanel: {
+    borderTop: `1px solid ${MODERN_TOKENS.colorBorder}`,
+    paddingTop: "6px",
+    display: "grid",
+    gap: "6px",
+  },
+  utilityActionsRow: { display: "flex", flexWrap: "wrap", gap: "8px" },
+  utilityBtn: {
+    borderRadius: "8px",
+    border: `1px solid ${MODERN_TOKENS.colorBorder}`,
+    backgroundColor: "#FFFFFF",
+    color: MODERN_TOKENS.colorText,
+    padding: "6px 8px",
+    fontSize: "11px",
+    cursor: "pointer",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "8px",
+    justifyContent: "center",
+    minHeight: "30px",
+    whiteSpace: "nowrap",
+  },
+  utilitySizeGrid: { display: "flex", flexWrap: "wrap", gap: "8px" },
+  utilitySizeRow: { display: "grid", gridTemplateColumns: "1fr auto", gap: "8px", alignItems: "center" },
+  utilitySizeInput: {
+    width: "100%",
+    boxSizing: "border-box",
+    border: `1px solid ${MODERN_TOKENS.colorBorder}`,
+    borderRadius: "8px",
+    padding: "7px 10px",
+    fontSize: "13px",
+  },
   formatRow: { borderRadius: "8px", border: `1px solid ${MODERN_TOKENS.colorBorder}`, padding: "8px 10px", display: "grid", gridTemplateColumns: "1fr auto", gap: "8px", alignItems: "center" },
   empty: { borderRadius: "8px", border: `1px dashed ${MODERN_TOKENS.colorBorder}`, padding: "12px", color: MODERN_TOKENS.colorTextMuted, fontSize: "12px" },
 });
@@ -284,7 +538,15 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
   const [shapeFilterQuery, setShapeFilterQuery] = useState("");
   const [shapeLinkFilter, setShapeLinkFilter] = useState<ShapeLinkFilter>("all");
   const [iconQuery, setIconQuery] = useState("");
+  const [customIconInput, setCustomIconInput] = useState("");
   const [cellRefInput, setCellRefInput] = useState("");
+  const [openColorTarget, setOpenColorTarget] = useState<StyleColorTarget | null>(null);
+  const [textEditorExpanded, setTextEditorExpanded] = useState(false);
+  const [columnWidthInput, setColumnWidthInput] = useState("14");
+  const [rowHeightInput, setRowHeightInput] = useState("18");
+  const [utilityMenu, setUtilityMenu] = useState<UtilityMenu>("view");
+  const [utilityPinned, setUtilityPinned] = useState(true);
+  const [utilityCollapsed, setUtilityCollapsed] = useState(false);
   const [applyTemplateAll, setApplyTemplateAll] = useState(false);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
@@ -292,13 +554,44 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
   const [styleBaseline, setStyleBaseline] = useState<StyleBaseline | null>(null);
   const shapeHandlersRef = useRef<Array<{ remove: () => Promise<void> | void }>>([]);
   const editorCardRef = useRef<HTMLDivElement | null>(null);
+  const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
   const styleBaselineShapeIdRef = useRef<string>("");
 
   const selectedShape = useMemo(() => shapes.find((x) => x.id === selectedShapeId) ?? null, [shapes, selectedShapeId]);
+  const fluentIconMatches = useMemo(() => {
+    const query = iconQuery.trim().toLowerCase();
+    if (!query) {
+      return [];
+    }
+    return FLUENT_ICON_NAME_CATALOG.filter((name) => name.includes(query));
+  }, [iconQuery]);
+  const fluentIconMatchKeywordSet = useMemo(() => {
+    const set = new Set<string>();
+    fluentIconMatches.forEach((name) => {
+      tokenizeSearchValue(name).forEach((token) => set.add(token));
+    });
+    return set;
+  }, [fluentIconMatches]);
   const filteredIcons = useMemo(() => {
     const q = iconQuery.trim().toLowerCase();
-    return q ? ICONS.filter((x) => x.key.includes(q) || x.label.toLowerCase().includes(q)) : ICONS;
-  }, [iconQuery]);
+    if (!q) {
+      return SHAPE_BUILDER_ICON_OPTIONS;
+    }
+    return SHAPE_BUILDER_ICON_OPTIONS.filter((icon) => {
+      const directMatch =
+        icon.key.toLowerCase().includes(q) ||
+        icon.label.toLowerCase().includes(q) ||
+        icon.symbol.toLowerCase().includes(q) ||
+        icon.keywords.some((keyword) => keyword.includes(q));
+      if (directMatch) {
+        return true;
+      }
+      if (!fluentIconMatchKeywordSet.size) {
+        return false;
+      }
+      return icon.keywords.some((keyword) => fluentIconMatchKeywordSet.has(keyword));
+    });
+  }, [iconQuery, fluentIconMatchKeywordSet]);
   const filteredShapes = useMemo(() => {
     const query = shapeFilterQuery.trim().toLowerCase();
     return shapes.filter((shape) => {
@@ -403,11 +696,18 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
         fillColor: selectedShape.fillColor,
         outlineColor: selectedShape.outlineColor,
         outlineWidth: selectedShape.outlineWidth,
+        fontColor: selectedShape.fontColor,
+        fontSize: selectedShape.fontSize,
+        bold: selectedShape.bold,
+        italic: selectedShape.italic,
         effect: selectedShape.effect,
       });
     }
     setIconQuery("");
+    setCustomIconInput(selectedShape ? decodeCustomIconValue(selectedShape.iconKey) : "");
     setCellRefInput("");
+    setOpenColorTarget(null);
+    setTextEditorExpanded(false);
   }, [selectedShape]);
 
   const clearShapeHandlers = useCallback(() => {
@@ -501,6 +801,56 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
     [selectedShape]
   );
 
+  const applyTextSelectionFormat = useCallback(
+    async (updates: ShapeBuilderTextSelectionFormatRequest) => {
+      if (!draft) {
+        return;
+      }
+      const textArea = textAreaRef.current;
+      const selectionStart = textArea ? Math.min(textArea.selectionStart, textArea.selectionEnd) : 0;
+      const selectionEnd = textArea ? Math.max(textArea.selectionStart, textArea.selectionEnd) : 0;
+      const selectionLength = selectionEnd - selectionStart;
+      if (selectionLength <= 0) {
+        setErr("Select text in the editor first.");
+        return;
+      }
+
+      try {
+        const updated = await formatShapeBuilderTextSelection(
+          draft.sheetName,
+          draft.shapeName,
+          selectionStart,
+          selectionLength,
+          updates
+        );
+        setShapes((prev) =>
+          sortShapesBySelectionPanePosition(prev.map((item) => (item.id === updated.id ? updated : item)))
+        );
+        setDraft(updated);
+        window.setTimeout(() => {
+          const editor = textAreaRef.current;
+          if (!editor) {
+            return;
+          }
+          editor.focus();
+          editor.setSelectionRange(selectionStart, selectionEnd);
+        }, 0);
+      } catch (error) {
+        setErr(error);
+      }
+    },
+    [draft]
+  );
+
+  const runUtilityAction = useCallback(async (successMessage: string, action: () => Promise<void>) => {
+    try {
+      await action();
+      setOk(successMessage);
+    } catch (error) {
+      setErr(error);
+    }
+  }, []);
+
   const applyFillColor = (value: string) => {
     if (!draft) {
       return;
@@ -519,7 +869,16 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
     void patchShape({ outlineColor });
   };
 
-  const pickColorFromScreen = async (target: "fill" | "outline") => {
+  const applyFontColor = (value: string) => {
+    if (!draft) {
+      return;
+    }
+    const fontColor = toUpperHexOrFallback(value, draft.fontColor);
+    setDraft({ ...draft, fontColor });
+    void patchShape({ fontColor });
+  };
+
+  const pickColorFromScreen = async (target: StyleColorTarget) => {
     if (!draft) {
       return;
     }
@@ -537,8 +896,10 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
       }
       if (target === "fill") {
         applyFillColor(result.sRGBHex);
-      } else {
+      } else if (target === "outline") {
         applyOutlineColor(result.sRGBHex);
+      } else {
+        applyFontColor(result.sRGBHex);
       }
     } catch (error) {
       const message = normalizeError(error).toLowerCase();
@@ -557,6 +918,10 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
       fillColor: styleBaseline.fillColor,
       outlineColor: styleBaseline.outlineColor,
       outlineWidth: styleBaseline.outlineWidth,
+      fontColor: styleBaseline.fontColor,
+      fontSize: styleBaseline.fontSize,
+      bold: styleBaseline.bold,
+      italic: styleBaseline.italic,
       effect: styleBaseline.effect,
     };
     setDraft({
@@ -564,6 +929,10 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
       fillColor: styleBaseline.fillColor,
       outlineColor: styleBaseline.outlineColor,
       outlineWidth: styleBaseline.outlineWidth,
+      fontColor: styleBaseline.fontColor,
+      fontSize: styleBaseline.fontSize,
+      bold: styleBaseline.bold,
+      italic: styleBaseline.italic,
       effect: styleBaseline.effect,
     });
     void patchShape(patch);
@@ -586,10 +955,12 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
         fontSize: 16,
         bold: true,
         italic: false,
+        textHorizontalAlignment: "Left",
+        textVerticalAlignment: "Middle",
         linkType: "None",
         internalDestinationId: "",
         externalUrl: "",
-        effect: "Shadow",
+        effect: "None",
       });
       setShapes((prev) => sortShapesBySelectionPanePosition([...prev, created]));
       setSelectedShapeId(created.id);
@@ -683,8 +1054,227 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
     }
   };
 
+  const applyCustomIcon = () => {
+    if (!draft) {
+      return;
+    }
+    const symbol = customIconInput;
+    if (!symbol) {
+      setErr("Paste an icon or emoji first.");
+      return;
+    }
+    const iconKey = encodeCustomIconKey(symbol);
+    setDraft({ ...draft, iconKey });
+    void patchShape({ iconKey });
+    setOk("Custom icon applied.");
+  };
+
+  const applyColumnWidth = () => {
+    const width = Number(columnWidthInput);
+    if (!Number.isFinite(width) || width <= 0) {
+      setErr("Enter a valid column width.");
+      return;
+    }
+    void runUtilityAction(
+      "Column width applied to selection (or entire sheet when a single cell is selected).",
+      () => setSelectionColumnWidth(width)
+    );
+  };
+
+  const applyRowHeight = () => {
+    const height = Number(rowHeightInput);
+    if (!Number.isFinite(height) || height <= 0) {
+      setErr("Enter a valid row height.");
+      return;
+    }
+    void runUtilityAction(
+      "Row height applied to selection (or entire sheet when a single cell is selected).",
+      () => setSelectionRowHeight(height)
+    );
+  };
+
+  const fillDisplayColor = draft
+    ? draft.fillColor === NO_FILL_COLOR_TOKEN
+      ? NO_FILL_COLOR_TOKEN
+      : toUpperHexOrFallback(draft.fillColor, "#A8D5AD")
+    : "#A8D5AD";
+  const outlineDisplayColor = draft ? toUpperHexOrFallback(draft.outlineColor, "#8CBF95") : "#8CBF95";
+  const fontDisplayColor = draft ? toUpperHexOrFallback(draft.fontColor, "#1F2937") : "#1F2937";
+  const activeUtilityMenuLabel =
+    UTILITY_MENU_ITEMS.find((item) => item.key === utilityMenu)?.label ?? "Utilities";
+  const formattingUtilitiesCard = (
+    <div
+      className={`${s.utilityDock} ${utilityPinned ? s.utilityPinnedCard : s.utilityFloatingCard} ${
+        utilityCollapsed ? s.utilityDockCollapsed : ""
+      }`}
+    >
+      <div className={s.utilityHeaderRow}>
+        <div className={s.utilityHeadingWrap}>
+          <Text className={s.utilityTitleSmall}>Formatting Utilities</Text>
+          <span className={s.utilityActivePill}>{activeUtilityMenuLabel}</span>
+        </div>
+        {!utilityCollapsed ? (
+          <div className={s.utilityMenuBar}>
+            {UTILITY_MENU_ITEMS.map((item) => (
+              <button
+                key={item.key}
+                className={`${s.utilityMenuTab} ${utilityMenu === item.key ? s.utilityMenuTabActive : ""}`}
+                type="button"
+                onClick={() => setUtilityMenu(item.key)}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div />
+        )}
+        <div className={s.utilityHeaderActions}>
+          <button
+            className={s.utilityHeaderBtn}
+            type="button"
+            onClick={() => setUtilityPinned((prev) => !prev)}
+            title={utilityPinned ? "Unpin utilities" : "Pin utilities"}
+            aria-label={utilityPinned ? "Unpin utilities" : "Pin utilities"}
+          >
+            {utilityPinned ? <Pin20Regular /> : <PinOff20Regular />}
+          </button>
+          <button
+            className={s.utilityHeaderBtn}
+            type="button"
+            onClick={() => setUtilityCollapsed((prev) => !prev)}
+            title={utilityCollapsed ? "Expand utilities" : "Collapse utilities"}
+            aria-label={utilityCollapsed ? "Expand utilities" : "Collapse utilities"}
+          >
+            {utilityCollapsed ? <ChevronDown20Regular /> : <ChevronUp20Regular />}
+          </button>
+        </div>
+      </div>
+      {!utilityCollapsed ? (
+        <>
+          <div className={s.utilityPanel}>
+        {utilityMenu === "view" ? (
+          <div className={s.utilityActionsRow}>
+            <button
+              className={s.utilityBtn}
+              type="button"
+              onClick={() => void runUtilityAction("Gridlines toggled.", toggleGridlines)}
+            >
+              <Grid20Regular /> Toggle Gridlines
+            </button>
+          </div>
+        ) : null}
+        {utilityMenu === "freeze" ? (
+          <div className={s.utilityActionsRow}>
+            <button
+              className={s.utilityBtn}
+              type="button"
+              onClick={() => void runUtilityAction("Top row frozen.", freezeTopRow)}
+            >
+              <TableFreezeRow20Regular /> Freeze Top Row
+            </button>
+            <button
+              className={s.utilityBtn}
+              type="button"
+              onClick={() => void runUtilityAction("First column frozen.", freezeFirstColumn)}
+            >
+              <TableFreezeColumn20Regular /> Freeze First Column
+            </button>
+            <button
+              className={s.utilityBtn}
+              type="button"
+              onClick={() => void runUtilityAction("Panes unfrozen.", unfreezePanes)}
+            >
+              <TableFreezeColumnAndRow20Regular /> Unfreeze Panes
+            </button>
+          </div>
+        ) : null}
+        {utilityMenu === "data" ? (
+          <div className={s.utilityActionsRow}>
+            <button
+              className={s.utilityBtn}
+              type="button"
+              onClick={() => void runUtilityAction("Pivot tables refreshed.", refreshPivotTables)}
+            >
+              <ArrowClockwise20Regular /> Refresh Pivots
+            </button>
+          </div>
+        ) : null}
+        {utilityMenu === "sheet" ? (
+          <div className={s.utilityActionsRow}>
+            <button
+              className={s.utilityBtn}
+              type="button"
+              onClick={() => void runUtilityAction("Active sheet hidden.", hideActiveSheet)}
+            >
+              <SlideHide20Regular /> Hide Sheet
+            </button>
+            <button
+              className={s.utilityBtn}
+              type="button"
+              onClick={() => void runUtilityAction("Active sheet set to very hidden.", hideActiveSheetVeryHidden)}
+            >
+              <EyeOff20Regular /> Hide Very Hidden
+            </button>
+          </div>
+        ) : null}
+        {utilityMenu === "sizing" ? (
+          <>
+            <Text className={s.label}>Selection or Sheet Sizing</Text>
+            <Text className={s.muted}>If only one cell is selected, sizing applies to the entire active sheet.</Text>
+            <div className={s.utilitySizeGrid}>
+              <div className={s.utilitySizeRow}>
+                <input
+                  className={s.utilitySizeInput}
+                  type="number"
+                  min={1}
+                  step={0.5}
+                  value={columnWidthInput}
+                  onChange={(event) => setColumnWidthInput(event.target.value)}
+                  placeholder="Column width"
+                />
+                <button
+                  className={s.utilityBtn}
+                  type="button"
+                  onClick={applyColumnWidth}
+                  title="Apply column width"
+                  aria-label="Apply column width"
+                >
+                  <TableResizeColumn20Regular />
+                </button>
+              </div>
+              <div className={s.utilitySizeRow}>
+                <input
+                  className={s.utilitySizeInput}
+                  type="number"
+                  min={1}
+                  step={0.5}
+                  value={rowHeightInput}
+                  onChange={(event) => setRowHeightInput(event.target.value)}
+                  placeholder="Row height"
+                />
+                <button
+                  className={s.utilityBtn}
+                  type="button"
+                  onClick={applyRowHeight}
+                  title="Apply row height"
+                  aria-label="Apply row height"
+                >
+                  <TableResizeRow20Regular />
+                </button>
+              </div>
+            </div>
+          </>
+        ) : null}
+          </div>
+        </>
+      ) : null}
+    </div>
+  );
+
   return (
     <div className={s.root}>
+      {formattingUtilitiesCard}
       <div className={s.hero}>
         <div className={s.heroTop}>
           <div>
@@ -830,14 +1420,191 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
                 <select className={s.select} value={draft.shapeType} onChange={(event) => { const shapeType = event.target.value as InsertableShapeType; setDraft({ ...draft, shapeType }); void patchShape({ shapeType }); }}>
                   {SHAPE_TYPES.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                 </select>
-                <Text className={s.label}>Text</Text>
-                <input className={s.input} value={draft.text} onChange={(event) => setDraft({ ...draft, text: event.target.value })} onBlur={() => void patchShape({ text: draft.text })} />
+                <Text className={s.label}>Text Editor</Text>
+                <div className={s.textEditorCard}>
+                  <div className={s.textToolbar}>
+                    <button
+                      className={`${s.iconOnlyBtn} ${draft.bold ? s.iconOnlyBtnActive : ""}`}
+                      type="button"
+                      onClick={() => void applyTextSelectionFormat({ bold: !draft.bold })}
+                      title="Bold selected text"
+                      aria-label="Bold selected text"
+                    >
+                      <TextBold20Regular />
+                    </button>
+                    <button
+                      className={`${s.iconOnlyBtn} ${draft.italic ? s.iconOnlyBtnActive : ""}`}
+                      type="button"
+                      onClick={() => void applyTextSelectionFormat({ italic: !draft.italic })}
+                      title="Italic selected text"
+                      aria-label="Italic selected text"
+                    >
+                      <TextItalic20Regular />
+                    </button>
+                    <div className={s.textToolbarDivider} />
+                    <button
+                      className={`${s.iconOnlyBtn} ${
+                        draft.textHorizontalAlignment === "Left" ? s.iconOnlyBtnActive : ""
+                      }`}
+                      type="button"
+                      onClick={() => {
+                        const textHorizontalAlignment = "Left";
+                        setDraft({ ...draft, textHorizontalAlignment });
+                        void patchShape({ textHorizontalAlignment });
+                      }}
+                      title="Align left"
+                      aria-label="Align left"
+                    >
+                      <TextAlignLeft20Regular />
+                    </button>
+                    <button
+                      className={`${s.iconOnlyBtn} ${
+                        draft.textHorizontalAlignment === "Center" ? s.iconOnlyBtnActive : ""
+                      }`}
+                      type="button"
+                      onClick={() => {
+                        const textHorizontalAlignment = "Center";
+                        setDraft({ ...draft, textHorizontalAlignment });
+                        void patchShape({ textHorizontalAlignment });
+                      }}
+                      title="Align center"
+                      aria-label="Align center"
+                    >
+                      <TextAlignCenter20Regular />
+                    </button>
+                    <button
+                      className={`${s.iconOnlyBtn} ${
+                        draft.textHorizontalAlignment === "Right" ? s.iconOnlyBtnActive : ""
+                      }`}
+                      type="button"
+                      onClick={() => {
+                        const textHorizontalAlignment = "Right";
+                        setDraft({ ...draft, textHorizontalAlignment });
+                        void patchShape({ textHorizontalAlignment });
+                      }}
+                      title="Align right"
+                      aria-label="Align right"
+                    >
+                      <TextAlignRight20Regular />
+                    </button>
+                    <select
+                      className={s.compactSelect}
+                      value={draft.textVerticalAlignment}
+                      onChange={(event) => {
+                        const textVerticalAlignment = event.target.value as ShapeBuilderShapeRecord["textVerticalAlignment"];
+                        setDraft({ ...draft, textVerticalAlignment });
+                        void patchShape({ textVerticalAlignment });
+                      }}
+                      title="Vertical alignment"
+                    >
+                      <option value="Top">Top</option>
+                      <option value="Middle">Middle</option>
+                      <option value="Bottom">Bottom</option>
+                    </select>
+                    <input
+                      className={s.compactColorInput}
+                      type="color"
+                      value={toUpperHexOrFallback(draft.fontColor, "#1F2937")}
+                      onChange={(event) => applyFontColor(event.target.value)}
+                      title="Text color"
+                    />
+                    <button
+                      className={s.iconOnlyBtn}
+                      type="button"
+                      onClick={() => void pickColorFromScreen("font")}
+                      title="Eyedropper Font"
+                      aria-label="Eyedropper Font"
+                    >
+                      <Eyedropper20Regular />
+                    </button>
+                    <button
+                      className={s.iconOnlyBtn}
+                      type="button"
+                      onClick={() => {
+                        textAreaRef.current?.focus();
+                        setOk("Press Windows+V to paste emojis/icons into the text editor.");
+                      }}
+                      title="Use Windows+V emojis/icons"
+                      aria-label="Use Windows+V emojis/icons"
+                    >
+                      <Emoji20Regular />
+                    </button>
+                    <input
+                      className={s.input}
+                      style={{ width: "84px", padding: "7px 8px" }}
+                      type="number"
+                      min={8}
+                      max={72}
+                      value={Math.round(draft.fontSize)}
+                      onChange={(event) => {
+                        const fontSize = clamp(Number(event.target.value) || draft.fontSize, 8, 72);
+                        setDraft({ ...draft, fontSize });
+                      }}
+                      onBlur={() => void patchShape({ fontSize: draft.fontSize })}
+                      title="Font size"
+                    />
+                    <button className={s.smallBtn} type="button" onClick={() => setTextEditorExpanded((prev) => !prev)}>
+                      {textEditorExpanded ? "Compact" : "Expand"}
+                    </button>
+                  </div>
+                  <Text className={s.textToolbarHint}>
+                    Select text first for Bold/Italic. Use Windows+V to paste icons/emojis and add leading line breaks.
+                  </Text>
+                  <textarea
+                    ref={textAreaRef}
+                    className={`${s.textArea} ${textEditorExpanded ? s.textAreaExpanded : ""}`}
+                    style={{
+                      color: draft.fontColor,
+                      textAlign: draft.textHorizontalAlignment.toLowerCase() as "left" | "center" | "right",
+                    }}
+                    value={draft.text}
+                    onChange={(event) => setDraft({ ...draft, text: event.target.value })}
+                    onBlur={() => void patchShape({ text: draft.text })}
+                  />
+                </div>
                 <Text className={s.label}>Icon</Text>
-                <Input value={iconQuery} placeholder="Search icons..." onChange={(_, data) => setIconQuery(data.value)} />
+                <Input value={iconQuery} placeholder="Search icons or Fluent names..." onChange={(_, data) => setIconQuery(data.value)} />
+                <div className={s.grid2}>
+                  <Input
+                    value={customIconInput}
+                    placeholder="Paste custom icon/emoji (Windows+V)"
+                    onChange={(_, data) => setCustomIconInput(data.value)}
+                  />
+                  <button className={s.smallBtn} type="button" onClick={applyCustomIcon}>
+                    Apply Custom Icon
+                  </button>
+                </div>
+                <div className={s.horizontal}>
+                  <button
+                    className={s.smallBtn}
+                    type="button"
+                    onClick={() => {
+                      setCustomIconInput("");
+                      setDraft({ ...draft, iconKey: "none" });
+                      void patchShape({ iconKey: "none" });
+                    }}
+                  >
+                    No Icon
+                  </button>
+                </div>
+                <Text className={s.iconCount}>
+                  {filteredIcons.length} icon{filteredIcons.length === 1 ? "" : "s"} shown •{" "}
+                  {FLUENT_ICON_NAME_CATALOG.length.toLocaleString()} Fluent names indexed
+                  {iconQuery.trim().length > 0 ? ` • ${fluentIconMatches.length.toLocaleString()} Fluent matches` : ""}
+                </Text>
                 <div className={s.iconGrid}>
                   {filteredIcons.map((icon) => (
-                    <button key={icon.key} className={`${s.iconBtn} ${draft.iconKey === icon.key ? s.iconActive : ""}`} type="button" onClick={() => { setDraft({ ...draft, iconKey: icon.key }); void patchShape({ iconKey: icon.key }); }}>
-                      <span>{icon.symbol}</span><span>{icon.label}</span>
+                    <button
+                      key={icon.key}
+                      className={`${s.iconBtn} ${draft.iconKey === icon.key ? s.iconActive : ""}`}
+                      type="button"
+                      onClick={() => {
+                        setCustomIconInput("");
+                        setDraft({ ...draft, iconKey: icon.key });
+                        void patchShape({ iconKey: icon.key });
+                      }}
+                    >
+                      <span>{icon.symbol || "-"}</span><span>{icon.label}</span>
                     </button>
                   ))}
                 </div>
@@ -846,68 +1613,246 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
 
             {tab === "style" ? (
               <div className={s.panel}>
-                <div className={s.colorToolRow}>
-                  <button
-                    className={`${s.smallBtn} ${draft.fillColor === NO_FILL_COLOR_TOKEN ? s.noFillBtnActive : ""}`}
-                    type="button"
-                    onClick={() => applyFillColor(NO_FILL_COLOR_TOKEN)}
-                  >
-                    No Fill
-                  </button>
-                  <button className={s.smallBtn} type="button" onClick={() => void pickColorFromScreen("fill")}>
-                    Eyedropper Fill
-                  </button>
-                  <button className={s.smallBtn} type="button" onClick={() => void pickColorFromScreen("outline")}>
-                    Eyedropper Outline
-                  </button>
+                <div className={s.horizontal}>
                   <button className={s.smallBtn} type="button" onClick={revertStyleChanges} disabled={!styleBaseline}>
-                    Revert
+                    Revert Style
                   </button>
                 </div>
                 <Text className={s.muted}>Theme swatches are pulled from this workbook's active theme.</Text>
-                <Text className={s.label}>Fill Color</Text>
-                <div className={s.swatches}>
-                  {themeColors.map((color) => (
+                <Text className={s.label}>Fill</Text>
+                <div className={s.colorCompactGroup}>
+                  <div className={s.colorCompactHeader}>
                     <button
-                      key={`f-${color}`}
-                      className={`${s.swatch} ${draft.fillColor.toLowerCase() === color.toLowerCase() ? s.swatchActive : ""}`}
-                      style={{ backgroundColor: color }}
+                      className={s.colorCurrentBtn}
                       type="button"
-                      onClick={() => applyFillColor(color)}
-                    />
-                  ))}
-                </div>
-                <input
-                  className={s.colorInput}
-                  type="color"
-                  value={draft.fillColor === NO_FILL_COLOR_TOKEN ? "#FFFFFF" : toUpperHexOrFallback(draft.fillColor, "#A8D5AD")}
-                  onChange={(event) => applyFillColor(event.target.value)}
-                />
-                <Text className={s.label}>Outline Color</Text>
-                <div className={s.swatches}>
-                  {themeColors.map((color) => (
+                      onClick={() => setOpenColorTarget((prev) => (prev === "fill" ? null : "fill"))}
+                    >
+                      <span className={s.colorCurrentMain}>
+                        <span
+                          className={s.colorChip}
+                          style={{
+                            background:
+                              fillDisplayColor === NO_FILL_COLOR_TOKEN
+                                ? "repeating-linear-gradient(-45deg,#FFFFFF,#FFFFFF 6px,#EEF2F6 6px,#EEF2F6 12px)"
+                                : fillDisplayColor,
+                          }}
+                        />
+                        <span className={s.colorCurrentLabel}>
+                          {fillDisplayColor === NO_FILL_COLOR_TOKEN ? "No Fill" : fillDisplayColor}
+                        </span>
+                      </span>
+                      {openColorTarget === "fill" ? <ChevronUp20Regular /> : <ChevronDown20Regular />}
+                    </button>
                     <button
-                      key={`o-${color}`}
-                      className={`${s.swatch} ${draft.outlineColor.toLowerCase() === color.toLowerCase() ? s.swatchActive : ""}`}
-                      style={{ backgroundColor: color }}
+                      className={s.iconOnlyBtn}
                       type="button"
-                      onClick={() => applyOutlineColor(color)}
-                    />
-                  ))}
+                      onClick={() => void pickColorFromScreen("fill")}
+                      title="Eyedropper Fill"
+                      aria-label="Eyedropper Fill"
+                    >
+                      <Eyedropper20Regular />
+                    </button>
+                  </div>
+                  {openColorTarget === "fill" ? (
+                    <div className={s.colorCompactBody}>
+                      <div className={s.swatches}>
+                        <button
+                          type="button"
+                          className={`${s.noFillSwatch} ${draft.fillColor === NO_FILL_COLOR_TOKEN ? s.swatchActive : ""}`}
+                          onClick={() => applyFillColor(NO_FILL_COLOR_TOKEN)}
+                        >
+                          No Fill
+                        </button>
+                        {themeColors.map((color) => (
+                          <button
+                            key={`f-${color}`}
+                            className={`${s.swatch} ${
+                              draft.fillColor !== NO_FILL_COLOR_TOKEN &&
+                              draft.fillColor.toLowerCase() === color.toLowerCase()
+                                ? s.swatchActive
+                                : ""
+                            }`}
+                            style={{ backgroundColor: color }}
+                            type="button"
+                            onClick={() => applyFillColor(color)}
+                          />
+                        ))}
+                      </div>
+                      <input
+                        className={s.colorInput}
+                        type="color"
+                        value={
+                          draft.fillColor === NO_FILL_COLOR_TOKEN
+                            ? "#FFFFFF"
+                            : toUpperHexOrFallback(draft.fillColor, "#A8D5AD")
+                        }
+                        onChange={(event) => applyFillColor(event.target.value)}
+                      />
+                    </div>
+                  ) : null}
                 </div>
-                <input
-                  className={s.colorInput}
-                  type="color"
-                  value={toUpperHexOrFallback(draft.outlineColor, "#8CBF95")}
-                  onChange={(event) => applyOutlineColor(event.target.value)}
-                />
+                <Text className={s.label}>Outline</Text>
+                <div className={s.colorCompactGroup}>
+                  <div className={s.colorCompactHeader}>
+                    <button
+                      className={s.colorCurrentBtn}
+                      type="button"
+                      onClick={() => setOpenColorTarget((prev) => (prev === "outline" ? null : "outline"))}
+                    >
+                      <span className={s.colorCurrentMain}>
+                        <span className={s.colorChip} style={{ backgroundColor: outlineDisplayColor }} />
+                        <span className={s.colorCurrentLabel}>{outlineDisplayColor}</span>
+                      </span>
+                      {openColorTarget === "outline" ? <ChevronUp20Regular /> : <ChevronDown20Regular />}
+                    </button>
+                    <button
+                      className={s.iconOnlyBtn}
+                      type="button"
+                      onClick={() => void pickColorFromScreen("outline")}
+                      title="Eyedropper Outline"
+                      aria-label="Eyedropper Outline"
+                    >
+                      <Eyedropper20Regular />
+                    </button>
+                  </div>
+                  {openColorTarget === "outline" ? (
+                    <div className={s.colorCompactBody}>
+                      <div className={s.swatches}>
+                        {themeColors.map((color) => (
+                          <button
+                            key={`o-${color}`}
+                            className={`${s.swatch} ${
+                              draft.outlineColor.toLowerCase() === color.toLowerCase() ? s.swatchActive : ""
+                            }`}
+                            style={{ backgroundColor: color }}
+                            type="button"
+                            onClick={() => applyOutlineColor(color)}
+                          />
+                        ))}
+                      </div>
+                      <input
+                        className={s.colorInput}
+                        type="color"
+                        value={toUpperHexOrFallback(draft.outlineColor, "#8CBF95")}
+                        onChange={(event) => applyOutlineColor(event.target.value)}
+                      />
+                    </div>
+                  ) : null}
+                </div>
+                <Text className={s.label}>Font</Text>
+                <div className={s.colorCompactGroup}>
+                  <div className={s.colorCompactHeader}>
+                    <button
+                      className={s.colorCurrentBtn}
+                      type="button"
+                      onClick={() => setOpenColorTarget((prev) => (prev === "font" ? null : "font"))}
+                    >
+                      <span className={s.colorCurrentMain}>
+                        <span className={s.colorChip} style={{ backgroundColor: fontDisplayColor }} />
+                        <span className={s.colorCurrentLabel}>{fontDisplayColor}</span>
+                      </span>
+                      {openColorTarget === "font" ? <ChevronUp20Regular /> : <ChevronDown20Regular />}
+                    </button>
+                    <button
+                      className={s.iconOnlyBtn}
+                      type="button"
+                      onClick={() => void pickColorFromScreen("font")}
+                      title="Eyedropper Font"
+                      aria-label="Eyedropper Font"
+                    >
+                      <Eyedropper20Regular />
+                    </button>
+                  </div>
+                  {openColorTarget === "font" ? (
+                    <div className={s.colorCompactBody}>
+                      <div className={s.swatches}>
+                        {themeColors.map((color) => (
+                          <button
+                            key={`font-${color}`}
+                            className={`${s.swatch} ${
+                              draft.fontColor.toLowerCase() === color.toLowerCase() ? s.swatchActive : ""
+                            }`}
+                            style={{ backgroundColor: color }}
+                            type="button"
+                            onClick={() => applyFontColor(color)}
+                          />
+                        ))}
+                      </div>
+                      <input
+                        className={s.colorInput}
+                        type="color"
+                        value={toUpperHexOrFallback(draft.fontColor, "#1F2937")}
+                        onChange={(event) => applyFontColor(event.target.value)}
+                      />
+                    </div>
+                  ) : null}
+                </div>
+                <div className={s.grid2}>
+                  <div>
+                    <Text className={s.label}>Font Size</Text>
+                    <input
+                      className={s.input}
+                      type="number"
+                      min={8}
+                      max={72}
+                      value={Math.round(draft.fontSize)}
+                      onChange={(event) => {
+                        const next = clamp(Number(event.target.value) || draft.fontSize, 8, 72);
+                        setDraft({ ...draft, fontSize: next });
+                      }}
+                      onBlur={() => void patchShape({ fontSize: draft.fontSize })}
+                    />
+                  </div>
+                  <div>
+                    <Text className={s.label}>Font Style</Text>
+                    <div className={s.toggleGroup}>
+                      <button
+                        className={`${s.smallBtn} ${draft.bold ? s.toggleBtnActive : ""}`}
+                        type="button"
+                        onClick={() => {
+                          const bold = !draft.bold;
+                          setDraft({ ...draft, bold });
+                          void patchShape({ bold });
+                        }}
+                      >
+                        Bold
+                      </button>
+                      <button
+                        className={`${s.smallBtn} ${draft.italic ? s.toggleBtnActive : ""}`}
+                        type="button"
+                        onClick={() => {
+                          const italic = !draft.italic;
+                          setDraft({ ...draft, italic });
+                          void patchShape({ italic });
+                        }}
+                      >
+                        Italic
+                      </button>
+                    </div>
+                  </div>
+                </div>
                 <Text className={s.label}>Outline Width: {Math.round(draft.outlineWidth)}px</Text>
                 <input type="range" min={0} max={12} step={1} value={Math.round(draft.outlineWidth)} onChange={(event) => setDraft({ ...draft, outlineWidth: Number(event.target.value) })} onMouseUp={() => void patchShape({ outlineWidth: draft.outlineWidth })} onTouchEnd={() => void patchShape({ outlineWidth: draft.outlineWidth })} />
                 <Text className={s.label}>Effect</Text>
-                <select className={s.select} value={draft.effect} onChange={(event) => { const effect = event.target.value as ShapeBuilderEffect; setDraft({ ...draft, effect }); void patchShape({ effect }); }}>
-                  <option value="None">None</option>
-                  <option value="Shadow">Shadow</option>
-                </select>
+                <div className={s.helperCard}>
+                  <Text className={s.muted}>
+                    Excel shape effect presets are not exposed by Office.js. Use Excel Ribbon: Shape Effects.
+                  </Text>
+                  <button
+                    className={s.smallBtn}
+                    type="button"
+                    onClick={() => {
+                      if (draft.effect === "None") {
+                        return;
+                      }
+                      setDraft({ ...draft, effect: "None" });
+                      void patchShape({ effect: "None" as ShapeBuilderEffect });
+                    }}
+                    disabled={draft.effect === "None"}
+                  >
+                    Clear Effect Metadata
+                  </button>
+                </div>
               </div>
             ) : null}
 
@@ -1089,31 +2034,6 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
         ))}
       </div>
 
-      <div className={s.card}>
-        <div className={s.sectionHeader}>
-          <div className={s.sectionTitleWrap}>
-            <Text className={s.title}>Formatting Utilities</Text>
-            <Text className={s.muted}>Fast formatting actions for the active workbook.</Text>
-          </div>
-        </div>
-        <div className={s.utilityGrid}>
-          <button className={s.smallBtn} type="button" onClick={() => void toggleGridlines()}>Toggle Gridlines</button>
-          <button className={s.smallBtn} type="button" onClick={() => void freezeTopRow()}>Freeze Top Row</button>
-          <button className={s.smallBtn} type="button" onClick={() => void freezeFirstColumn()}>Freeze First Column</button>
-          <button className={s.smallBtn} type="button" onClick={() => void unfreezePanes()}>Unfreeze</button>
-          <button className={s.smallBtn} type="button" onClick={() => void refreshPivotTables()}>Refresh Pivots</button>
-        </div>
-        <div className={s.helperCard}>
-          <Text className={s.label}>Apply Cell Style Presets</Text>
-          <div className={s.buttonGrid2}>
-          {STYLE_PRESETS.map((preset) => (
-            <button key={preset.preset} className={s.smallBtn} type="button" onClick={() => void applyCellStylePreset(preset.preset)}>
-              {preset.label}
-            </button>
-          ))}
-          </div>
-        </div>
-      </div>
     </div>
   );
 };
