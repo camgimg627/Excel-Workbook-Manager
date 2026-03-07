@@ -5,6 +5,8 @@ export type NavigationTarget =
   | "names-create"
   | "tables"
   | "formulas"
+  | "queries"
+  | "model-builder"
   | "pivots"
   | "format"
   | "sandbox-debug"
@@ -16,6 +18,8 @@ export const NAVIGATION_TARGETS: ReadonlySet<NavigationTarget> = new Set<Navigat
   "names-create",
   "tables",
   "formulas",
+  "queries",
+  "model-builder",
   "pivots",
   "format",
   "sandbox-debug",

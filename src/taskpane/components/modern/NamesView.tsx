@@ -28,8 +28,10 @@ interface NamesViewProps {
 interface EditState {
   open: boolean;
   record: NamedRangeRecord | null;
+  editType: "Range" | "List" | "Formula";
   name: string;
   address: string;
+  listValues: string;
   fallbackSheet: string;
   caseTransform: CaseTransform;
 }
@@ -78,6 +80,8 @@ const ADDRESS_COLUMN_MAX_WIDTH = 960;
 const useStyles = makeStyles({
   root: { display: "grid", gap: "24px" },
   toolbar: { display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" },
+  toolbarPrimary: { display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" },
+  toolbarFilters: { display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap", marginLeft: "auto" },
   spacer: { flexGrow: 1 },
   tableWrap: {
     border: `1px solid ${MODERN_TOKENS.colorBorder}`,
@@ -272,6 +276,87 @@ const parseFunctionArgs = (value: string): string[] =>
     .map((item) => item.trim())
     .filter((item) => item.length > 0);
 
+const extractLambdaArgsFromFormula = (formulaInput: string): string[] => {
+  const normalized = formulaInput.trim().replace(/^=/, "").trim();
+  if (!/^LAMBDA\s*\(/i.test(normalized)) {
+    return [];
+  }
+  const start = normalized.indexOf("(");
+  const end = normalized.lastIndexOf(")");
+  if (start < 0 || end <= start + 1) {
+    return [];
+  }
+  const inner = normalized.slice(start + 1, end);
+  const parts: string[] = [];
+  let depth = 0;
+  let inString = false;
+  let current = "";
+  for (let index = 0; index < inner.length; index += 1) {
+    const ch = inner[index];
+    if (ch === '"') {
+      inString = !inString;
+      current += ch;
+      continue;
+    }
+    if (!inString) {
+      if (ch === "(") {
+        depth += 1;
+      } else if (ch === ")") {
+        depth = Math.max(0, depth - 1);
+      } else if (ch === "," && depth === 0) {
+        parts.push(current.trim());
+        current = "";
+        continue;
+      }
+    }
+    current += ch;
+  }
+  if (current.trim()) {
+    parts.push(current.trim());
+  }
+  if (parts.length <= 1) {
+    return [];
+  }
+  return parts.slice(0, -1).filter((item) => IDENTIFIER_PATTERN.test(item));
+};
+
+const parseNamedListFormula = (formulaInput: string): string[] => {
+  const normalized = formulaInput.trim().replace(/^=/, "").trim();
+  if (!normalized.startsWith("{") || !normalized.endsWith("}")) {
+    return [];
+  }
+  const body = normalized.slice(1, -1);
+  const values: string[] = [];
+  let current = "";
+  let inString = false;
+  for (let index = 0; index < body.length; index += 1) {
+    const ch = body[index];
+    if (ch === '"') {
+      if (inString && body[index + 1] === '"') {
+        current += '"';
+        index += 1;
+        continue;
+      }
+      inString = !inString;
+      continue;
+    }
+    if (!inString && (ch === ";" || ch === ",")) {
+      const token = current.trim();
+      if (token) {
+        values.push(token);
+      }
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+  const finalToken = current.trim();
+  if (finalToken) {
+    values.push(finalToken);
+  }
+  return values;
+};
+
 const buildLambdaFormula = (bodyInput: string, argsInput: string): string => {
   const normalizedBody = bodyInput.trim();
   if (!normalizedBody) {
@@ -344,8 +429,10 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy }) 
   const [editState, setEditState] = useState<EditState>({
     open: false,
     record: null,
+    editType: "Range",
     name: "",
     address: "",
+    listValues: "",
     fallbackSheet: "",
     caseTransform: "none",
   });
@@ -627,6 +714,20 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy }) 
   const submitEdit = async () => {
     const record = editState.record;
     if (!record) return;
+    let editAddress = editState.address.trim();
+    let referenceType: "Reference" | "Formula" = record.isRange ? "Reference" : "Formula";
+
+    if (editState.editType === "List") {
+      try {
+        editAddress = buildNamedListFormula(editState.listValues);
+        referenceType = "Formula";
+      } catch (error) {
+        setStatusType("error");
+        setStatus(err(error));
+        return;
+      }
+    }
+
     await runSubmit(
       async () => {
         await updateNamedRange(
@@ -634,14 +735,17 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy }) 
           record.scope,
           record.name,
           applyCase(editState.name.trim(), editState.caseTransform),
-          editState.address.trim(),
-          editState.fallbackSheet
+          editAddress,
+          editState.fallbackSheet,
+          referenceType
         );
         setEditState({
           open: false,
           record: null,
+          editType: "Range",
           name: "",
           address: "",
+          listValues: "",
           fallbackSheet: "",
           caseTransform: "none",
         });
@@ -752,10 +856,15 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy }) 
     }
     const normalizedFormula = row.address.trim().startsWith("=") ? row.address.trim() : `=${row.address.trim()}`;
     try {
+      const functionArgs =
+        row.type === "Function" ? extractLambdaArgsFromFormula(normalizedFormula).join(",") : undefined;
       await openFormulaEditorPopout({
         formula: normalizedFormula,
         name: row.name,
         entryType: row.type === "Function" ? "Function" : row.type === "List" ? "List" : "Formula",
+        creationMode: row.type === "Function" ? "Function" : "Formula",
+        authoringMode: "Editor",
+        functionArgs,
       });
       setStatusType("success");
       setStatus(`Opened formula editor pop-out for "${row.name}".`);
@@ -776,51 +885,54 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy }) 
 
       <div className={shared.card}>
         <div className={styles.toolbar}>
-          <Button appearance="primary" onClick={() => setCreateState((prev) => ({ ...prev, open: true }))}>
-            + Create Name
-          </Button>
-          <Button onClick={() => setBulkState((prev) => ({ ...prev, open: true }))} disabled={selectedIds.size === 0}>
-            Bulk Update ({selectedIds.size})
-          </Button>
-          <Button onClick={() => void load()} disabled={loading}>
-            Refresh
-          </Button>
-          <Button onClick={onOpenLegacy}>Open Legacy View</Button>
-          <div className={styles.spacer} />
-          <Select value={scopeFilter} onChange={(_, data) => setScopeFilter(data.value as "all" | ScopeType)}>
-            <option value="all">All Scopes</option>
-            <option value="Workbook">Workbook</option>
-            <option value="Worksheet">Worksheet</option>
-          </Select>
-          <details className={styles.typeFilterWrap}>
-            <summary className={styles.typeFilterSummary}>{typeFilterLabel}</summary>
-            <div className={styles.typeFilterMenu}>
-              <label className={styles.typeFilterRow}>
-                <input
-                  type="checkbox"
-                  checked={typeFilters.size === 0}
-                  onChange={() => setTypeFilters(new Set())}
-                />
-                All Types
-              </label>
-              <div className={styles.typeFilterDivider} />
-              {availableTypes.map((type) => (
-                <label key={type} className={styles.typeFilterRow}>
+          <div className={styles.toolbarPrimary}>
+            <Button appearance="primary" onClick={() => setCreateState((prev) => ({ ...prev, open: true }))}>
+              + Create Name
+            </Button>
+            <Button onClick={() => setBulkState((prev) => ({ ...prev, open: true }))} disabled={selectedIds.size === 0}>
+              Bulk Update ({selectedIds.size})
+            </Button>
+            <Button onClick={() => void load()} disabled={loading}>
+              Refresh
+            </Button>
+            <Button onClick={onOpenLegacy}>Open Legacy View</Button>
+          </div>
+          <div className={styles.toolbarFilters}>
+            <Select value={scopeFilter} onChange={(_, data) => setScopeFilter(data.value as "all" | ScopeType)}>
+              <option value="all">All Scopes</option>
+              <option value="Workbook">Workbook</option>
+              <option value="Worksheet">Worksheet</option>
+            </Select>
+            <details className={styles.typeFilterWrap}>
+              <summary className={styles.typeFilterSummary}>{typeFilterLabel}</summary>
+              <div className={styles.typeFilterMenu}>
+                <label className={styles.typeFilterRow}>
                   <input
                     type="checkbox"
-                    checked={typeFilters.has(type)}
-                    onChange={() => toggleTypeFilter(type)}
+                    checked={typeFilters.size === 0}
+                    onChange={() => setTypeFilters(new Set())}
                   />
-                  {type}
+                  All Types
                 </label>
-              ))}
-            </div>
-          </details>
-          <Input
-            placeholder="Search names, address, scope..."
-            value={search}
-            onChange={(_, data) => setSearch(data.value)}
-          />
+                <div className={styles.typeFilterDivider} />
+                {availableTypes.map((type) => (
+                  <label key={type} className={styles.typeFilterRow}>
+                    <input
+                      type="checkbox"
+                      checked={typeFilters.has(type)}
+                      onChange={() => toggleTypeFilter(type)}
+                    />
+                    {type}
+                  </label>
+                ))}
+              </div>
+            </details>
+            <Input
+              placeholder="Search names, address, scope..."
+              value={search}
+              onChange={(_, data) => setSearch(data.value)}
+            />
+          </div>
         </div>
       </div>
 
@@ -897,13 +1009,15 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy }) 
                   <div className={`${styles.rowActions} row-actions`}>
                     <Button
                       size="small"
-                      disabled={row.kind !== "NamedRange" || !row.isRange}
+                      disabled={row.kind !== "NamedRange"}
                       onClick={() =>
                         setEditState({
                           open: true,
                           record: row,
+                          editType: row.type === "List" ? "List" : row.isRange ? "Range" : "Formula",
                           name: row.name,
                           address: row.address,
+                          listValues: row.type === "List" ? parseNamedListFormula(row.address).join("\n") : "",
                           fallbackSheet: row.sheet,
                           caseTransform: "none",
                         })
@@ -1116,7 +1230,9 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy }) 
       {editState.open && editState.record ? (
         <div className={styles.modalBackdrop}>
           <div className={styles.modal}>
-            <Text className={shared.cardTitle}>Edit Named Range</Text>
+            <Text className={shared.cardTitle}>
+              {editState.editType === "List" ? "Edit Named List" : "Edit Named Range"}
+            </Text>
             <div className={styles.modalGrid}>
               <div>
                 <Text className={shared.mutedText}>Name</Text>
@@ -1136,35 +1252,51 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy }) 
                   <option value="SCREAMING_SNAKE_CASE">SCREAMING_SNAKE_CASE</option>
                 </Select>
               </div>
-              <div className={styles.full}>
-                <Text className={shared.mutedText}>Address</Text>
-                <Input
-                  value={editState.address}
-                  onChange={(_, data) => setEditState((p) => ({ ...p, address: data.value }))}
-                />
-              </div>
+              {editState.editType === "List" ? (
+                <div className={styles.full}>
+                  <Text className={shared.mutedText}>List Values</Text>
+                  <textarea
+                    className={styles.multilineInput}
+                    value={editState.listValues}
+                    onChange={(event) => setEditState((p) => ({ ...p, listValues: event.target.value }))}
+                    placeholder={"Open\nIn Progress\nClosed"}
+                  />
+                </div>
+              ) : (
+                <div className={styles.full}>
+                  <Text className={shared.mutedText}>Address</Text>
+                  <Input
+                    value={editState.address}
+                    onChange={(_, data) => setEditState((p) => ({ ...p, address: data.value }))}
+                  />
+                </div>
+              )}
             </div>
             <div className={styles.modalActions}>
-              <Button
-                onClick={() =>
-                  void captureSelection((selection) =>
-                    setEditState((p) => ({
-                      ...p,
-                      address: selection.address,
-                      fallbackSheet: selection.sheet,
-                    }))
-                  )
-                }
-              >
-                Use Selection
-              </Button>
+              {editState.editType !== "List" ? (
+                <Button
+                  onClick={() =>
+                    void captureSelection((selection) =>
+                      setEditState((p) => ({
+                        ...p,
+                        address: selection.address,
+                        fallbackSheet: selection.sheet,
+                      }))
+                    )
+                  }
+                >
+                  Use Selection
+                </Button>
+              ) : null}
               <Button
                 onClick={() =>
                   setEditState({
                     open: false,
                     record: null,
+                    editType: "Range",
                     name: "",
                     address: "",
+                    listValues: "",
                     fallbackSheet: "",
                     caseTransform: "none",
                   })

@@ -218,7 +218,7 @@ const styles = makeStyles({
   },
   utilityPinnedCard: {
     position: "sticky",
-    top: 0,
+    top: "8px",
     zIndex: 6,
     boxShadow: "0 2px 8px rgba(17,24,39,0.08)",
   },
@@ -1261,7 +1261,6 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
 
   return (
     <div className={s.root}>
-      {formattingUtilitiesCard}
       <div className={s.hero}>
         <div className={s.heroTop}>
           <div>
@@ -1291,6 +1290,8 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
           </Button>
         </div>
       </div>
+
+      {formattingUtilitiesCard}
 
       <div className={s.card}>
         <div className={s.row}>

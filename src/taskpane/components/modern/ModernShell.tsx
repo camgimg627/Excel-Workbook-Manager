@@ -19,6 +19,8 @@ import TablesView from "./TablesView";
 import SandboxDebugView from "./SandboxDebugView";
 import FormatView from "./FormatView";
 import PivotsView from "./PivotsView";
+import QueriesView from "./QueriesView";
+import ModelBuilderView from "./ModelBuilderView";
 import SettingsView from "./SettingsView";
 import HelpView from "./HelpView";
 import { MODERN_TOKENS } from "./designTokens";
@@ -154,6 +156,8 @@ const ModernShell: React.FC<ModernShellProps> = ({
       { id: "names", label: "Names", icon: <BookNumber20Regular />, enabled: true },
       { id: "tables", label: "Tables", icon: <Table20Regular />, enabled: true },
       { id: "formulas", label: "Formulas", icon: <DataArea20Regular />, enabled: true },
+      { id: "queries", label: "Queries", icon: <DataArea20Regular />, enabled: true },
+      { id: "model-builder", label: "Model Builder", icon: <Grid20Regular />, enabled: true },
       { id: "pivots", label: "Pivots", icon: <DataPie20Regular />, enabled: true },
       { id: "format", label: "Format", icon: <Grid20Regular />, enabled: true },
       { id: "sandbox-debug", label: "Sandbox", icon: <Box20Regular />, enabled: true },
@@ -225,6 +229,8 @@ const ModernShell: React.FC<ModernShellProps> = ({
           {activeTarget === "formulas" ? (
             <FormulaMonacoView ref={formulaViewRef} isPopout={false} onOpenLegacy={openLegacy} />
           ) : null}
+          {activeTarget === "queries" ? <QueriesView onOpenLegacy={openLegacy} /> : null}
+          {activeTarget === "model-builder" ? <ModelBuilderView onOpenLegacy={openLegacy} /> : null}
           {activeTarget === "format" ? <FormatView onOpenLegacy={openLegacy} /> : null}
           {activeTarget === "sandbox-debug" ? <SandboxDebugView onOpenLegacy={openLegacy} /> : null}
           {activeTarget === "pivots" ? <PivotsView onOpenLegacy={openLegacy} /> : null}

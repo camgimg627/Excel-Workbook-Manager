@@ -201,6 +201,30 @@ const useStyles = makeStyles({
     flexWrap: "wrap",
     alignItems: "center",
   },
+  slicer: {
+    display: "inline-flex",
+    borderRadius: "999px",
+    border: `1px solid ${MODERN_TOKENS.colorBorder}`,
+    backgroundColor: "#F8FAFC",
+    padding: "2px",
+    gap: "2px",
+  },
+  slicerBtn: {
+    borderRadius: "999px",
+    border: "none",
+    backgroundColor: "transparent",
+    color: MODERN_TOKENS.colorTextMuted,
+    padding: "4px 10px",
+    fontSize: "12px",
+    fontWeight: 600,
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+  },
+  slicerBtnActive: {
+    backgroundColor: "#FFFFFF",
+    color: MODERN_TOKENS.colorText,
+    boxShadow: "0 1px 2px rgba(17,24,39,0.08)",
+  },
   editorWrap: {
     borderRadius: "8px",
     border: `1px solid ${MODERN_TOKENS.colorBorder}`,
@@ -264,6 +288,44 @@ const useStyles = makeStyles({
     alignItems: "center",
     gap: "10px",
     flexWrap: "wrap",
+  },
+  widget: {
+    borderRadius: "8px",
+    border: `1px solid ${MODERN_TOKENS.colorBorder}`,
+    backgroundColor: "#fff",
+    display: "grid",
+  },
+  widgetHeaderBtn: {
+    border: "none",
+    backgroundColor: "transparent",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    width: "100%",
+    padding: "10px 12px",
+    cursor: "pointer",
+    color: MODERN_TOKENS.colorText,
+    fontWeight: 600,
+    fontSize: "12px",
+  },
+  widgetBody: {
+    borderTop: `1px solid ${MODERN_TOKENS.colorBorder}`,
+    padding: "10px 12px",
+    display: "grid",
+    gap: "10px",
+  },
+  actionDock: {
+    position: "sticky",
+    bottom: 0,
+    zIndex: 7,
+    marginTop: "8px",
+    borderRadius: "8px",
+    border: `1px solid ${MODERN_TOKENS.colorBorder}`,
+    backgroundColor: "rgba(255,255,255,0.96)",
+    boxShadow: MODERN_TOKENS.shadowCard,
+    padding: "8px",
+    display: "grid",
+    gap: "8px",
   },
   modeSelect: { minWidth: "160px" },
   functionMetaGrid: {
@@ -352,6 +414,27 @@ const useStyles = makeStyles({
     color: MODERN_TOKENS.colorTextMuted,
     backgroundColor: "#F9FAFB",
   },
+  chipBtn: {
+    border: "none",
+    backgroundColor: "transparent",
+    color: MODERN_TOKENS.colorTextMuted,
+    fontSize: "11px",
+    cursor: "pointer",
+    marginLeft: "4px",
+    padding: 0,
+  },
+  argsInput: {
+    minWidth: "220px",
+    flex: 1,
+  },
+  invocationText: {
+    fontSize: "11px",
+    color: MODERN_TOKENS.colorTextMuted,
+    fontFamily: "Consolas, 'Courier New', monospace",
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+  },
   formulaPreview: {
     borderRadius: "6px",
     border: `1px solid ${MODERN_TOKENS.colorBorder}`,
@@ -380,6 +463,33 @@ const parseLambdaArgs = (input: string): string[] =>
     .split(",")
     .map((item) => item.trim())
     .filter((item) => item.length > 0);
+
+const mergeArgsWithDraft = (argsInput: string, draftInput: string): string[] => {
+  const args = parseLambdaArgs(argsInput);
+  const draft = draftInput.trim();
+  if (!draft) {
+    return args;
+  }
+  if (!args.some((item) => item.toUpperCase() === draft.toUpperCase())) {
+    args.push(draft);
+  }
+  return args;
+};
+
+const stringifyArgs = (args: string[]): string => args.join(",");
+
+const getFirstErrorCell = (result: FormulaEvaluationResult): string => {
+  for (let rowIndex = 0; rowIndex < result.values.length; rowIndex += 1) {
+    const row = result.values[rowIndex];
+    for (let colIndex = 0; colIndex < row.length; colIndex += 1) {
+      if (result.valueTypes[rowIndex]?.[colIndex] === "Error") {
+        const value = row[colIndex];
+        return value === null || value === undefined || value === "" ? "#ERROR!" : String(value);
+      }
+    }
+  }
+  return "#ERROR!";
+};
 
 const buildNamedFunctionFormula = (formulaInput: string, argsInput: string): string => {
   const normalized = formulaInput.trim();
@@ -620,6 +730,7 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
     const [showSaveFunctionModal, setShowSaveFunctionModal] = useState<boolean>(false);
     const [namedFunctionName, setNamedFunctionName] = useState<string>("");
     const [namedFunctionArgs, setNamedFunctionArgs] = useState<string>("");
+    const [namedFunctionArgDraft, setNamedFunctionArgDraft] = useState<string>("");
     const [namedFunctionDescription, setNamedFunctionDescription] = useState<string>("");
     const [creationMode, setCreationMode] = useState<FormulaCreationMode>("Formula");
     const [authoringMode, setAuthoringMode] = useState<FormulaAuthoringMode>("Editor");
@@ -633,7 +744,14 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
     const [liveTestBusy, setLiveTestBusy] = useState<boolean>(false);
     const [liveTestError, setLiveTestError] = useState<string>("");
     const [lastTestedAt, setLastTestedAt] = useState<string>("");
+    const [lastTestInvocation, setLastTestInvocation] = useState<string>("");
     const [isEditorExpanded, setIsEditorExpanded] = useState<boolean>(false);
+    const [editorHasFocus, setEditorHasFocus] = useState<boolean>(false);
+    const [metaOpen, setMetaOpen] = useState<boolean>(true);
+    const [lambdaTestOpen, setLambdaTestOpen] = useState<boolean>(false);
+    const [editorOpen, setEditorOpen] = useState<boolean>(true);
+    const [wizardOpen, setWizardOpen] = useState<boolean>(false);
+    const [liveTestOpen, setLiveTestOpen] = useState<boolean>(true);
 
     const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
     const monacoRef = useRef<typeof Monaco | null>(null);
@@ -643,11 +761,17 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
     const pendingEvalRequestsRef = useRef<
       Map<string, { resolve: (result: FormulaEvaluationResult) => void; reject: (error: Error) => void; timeoutId: number }>
     >(new Map());
+    const lastSyncedFormulaRef = useRef<string>("");
+    const suppressAutoCaptureUntilRef = useRef<number>(0);
 
     const statusClass = statusType === "success" ? shared.successText : shared.errorText;
+    const effectiveNamedFunctionArgs = useMemo(
+      () => mergeArgsWithDraft(namedFunctionArgs, namedFunctionArgDraft),
+      [namedFunctionArgs, namedFunctionArgDraft]
+    );
     const namedFunctionArgPreview = useMemo(
-      () => parseLambdaArgs(namedFunctionArgs),
-      [namedFunctionArgs]
+      () => effectiveNamedFunctionArgs,
+      [effectiveNamedFunctionArgs]
     );
     const namedFunctionFormulaPreview = useMemo(() => {
       const current = (editorRef.current?.getValue() ?? formulaText).trim();
@@ -655,11 +779,11 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
         return { formula: "", error: "Enter a formula in the editor first." };
       }
       try {
-        return { formula: buildNamedFunctionFormula(current, namedFunctionArgs), error: "" };
+        return { formula: buildNamedFunctionFormula(current, stringifyArgs(effectiveNamedFunctionArgs)), error: "" };
       } catch (error) {
         return { formula: "", error: normalizeError(error) };
       }
-    }, [formulaText, namedFunctionArgs]);
+    }, [effectiveNamedFunctionArgs, formulaText]);
     const wizardPreview = useMemo(() => {
       try {
         const returnExpression = wizardReturnExpression.trim() || "0";
@@ -709,8 +833,8 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
       if (authoringMode === "Wizard" && wizardTemplate === "LAMBDA") {
         return parseLambdaArgs(wizardArgsInput);
       }
-      return parseLambdaArgs(namedFunctionArgs);
-    }, [authoringMode, wizardArgsInput, wizardTemplate, namedFunctionArgs]);
+      return effectiveNamedFunctionArgs;
+    }, [authoringMode, wizardArgsInput, wizardTemplate, effectiveNamedFunctionArgs]);
 
     useEffect(() => {
       let disposed = false;
@@ -748,6 +872,29 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
       }
     };
 
+    const commitNamedFunctionArgDraft = useCallback(() => {
+      const draft = namedFunctionArgDraft.trim();
+      if (!draft) {
+        return;
+      }
+      const next = parseLambdaArgs(namedFunctionArgs);
+      if (!next.some((item) => item.toUpperCase() === draft.toUpperCase())) {
+        next.push(draft);
+        setNamedFunctionArgs(next.join(","));
+      }
+      setNamedFunctionArgDraft("");
+    }, [namedFunctionArgDraft, namedFunctionArgs]);
+
+    const removeNamedFunctionArgAt = useCallback((index: number) => {
+      setNamedFunctionArgs((prev) => {
+        const next = parseLambdaArgs(prev);
+        if (index >= 0 && index < next.length) {
+          next.splice(index, 1);
+        }
+        return next.join(",");
+      });
+    }, []);
+
     const pullFromActiveCell = useCallback(
       async (requireFormula: boolean) => {
         const state = await getActiveCellFormulaState();
@@ -759,19 +906,46 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
           return false;
         }
         setFormulaText(state.formula);
+        lastSyncedFormulaRef.current = state.formula;
         return true;
       },
       []
     );
 
     const applyToActiveCell = useCallback(async () => {
-      const normalized = formulaText.trim();
+      const normalized = (editorRef.current?.getValue() ?? formulaText).trim();
       if (!normalized) {
         throw new Error("Formula editor is empty.");
       }
-      await applyFormulaToActiveCell(normalized);
+      const argsForApply = stringifyArgs(mergeArgsWithDraft(namedFunctionArgs, namedFunctionArgDraft));
+      const formulaToApply =
+        creationMode === "Function" ? buildNamedFunctionFormula(normalized, argsForApply) : normalized;
+      await applyFormulaToActiveCell(formulaToApply);
       const refreshed = await getActiveCellFormulaState();
       setActiveCell(refreshed);
+      lastSyncedFormulaRef.current = refreshed.formula;
+      setFormulaText(refreshed.formula);
+    }, [creationMode, formulaText, namedFunctionArgDraft, namedFunctionArgs]);
+
+    const autoPullOnEditorBlur = useCallback(async () => {
+      const currentEditorValue = (editorRef.current?.getValue() ?? formulaText).trim();
+      if (currentEditorValue !== lastSyncedFormulaRef.current.trim()) {
+        setStatusType("success");
+        setStatus("Auto-pull skipped to preserve unsaved editor changes.");
+        return;
+      }
+      const state = await getActiveCellFormulaState();
+      setActiveCell(state);
+      if (!state.hasFormula) {
+        return;
+      }
+      if (state.formula.trim() === currentEditorValue) {
+        return;
+      }
+      setFormulaText(state.formula);
+      lastSyncedFormulaRef.current = state.formula;
+      setStatusType("success");
+      setStatus(`Auto-pulled ${state.sheet}!${state.address} after editor blur.`);
     }, [formulaText]);
 
     const insertSelection = useCallback(async () => {
@@ -842,9 +1016,13 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
               return state;
             });
             if (!state.hasFormula) return;
+            if (Date.now() < suppressAutoCaptureUntilRef.current) {
+              return;
+            }
             const editorFocused = editorRef.current?.hasTextFocus() ?? false;
             if (!editorFocused && state.formula !== formulaText) {
               setFormulaText(state.formula);
+              lastSyncedFormulaRef.current = state.formula;
             }
           } catch {
             // ignore transient excel editing states
@@ -898,11 +1076,14 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
           }
           const normalizedFormula = incomingFormula.startsWith("=") ? incomingFormula : `=${incomingFormula}`;
           setFormulaText(normalizedFormula);
+          lastSyncedFormulaRef.current = normalizedFormula;
+          suppressAutoCaptureUntilRef.current = Date.now() + 1800;
           if (typeof data.name === "string" && data.name.trim()) {
             setNamedFunctionName(data.name.trim());
           }
           if (typeof data.functionArgs === "string") {
             setNamedFunctionArgs(data.functionArgs);
+            setNamedFunctionArgDraft("");
           }
           if (typeof data.description === "string") {
             setNamedFunctionDescription(data.description);
@@ -939,6 +1120,7 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
             const extractedArgs = extractLambdaArgsFromFormula(normalizedFormula);
             if (!data.functionArgs && extractedArgs.length > 0) {
               setNamedFunctionArgs(extractedArgs.join(","));
+              setNamedFunctionArgDraft("");
             }
           } else if (!data.creationMode) {
             setCreationMode("Formula");
@@ -1038,6 +1220,12 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
               return;
             }
             setFormulaOutput(result);
+            if (result.hasError) {
+              const errorText = getFirstErrorCell(result);
+              setLiveTestError(`Evaluation returned ${errorText}.`);
+            } else {
+              setLiveTestError("");
+            }
             setLastTestedAt(new Date().toLocaleTimeString());
           })
           .catch((error) => {
@@ -1195,12 +1383,22 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
       [registerCompletionProvider]
     );
 
-    const onMount: OnMount = useCallback((editor) => {
-      editorRef.current = editor;
-      editor.onDidChangeModelContent(() => {
-        setFormulaText(editor.getValue());
-      });
-    }, []);
+    const onMount: OnMount = useCallback(
+      (editor) => {
+        editorRef.current = editor;
+        editor.onDidChangeModelContent(() => {
+          setFormulaText(editor.getValue());
+        });
+        editor.onDidFocusEditorText(() => {
+          setEditorHasFocus(true);
+        });
+        editor.onDidBlurEditorText(() => {
+          setEditorHasFocus(false);
+          void autoPullOnEditorBlur();
+        });
+      },
+      [autoPullOnEditorBlur]
+    );
 
     useEffect(() => {
       registerCompletionProvider();
@@ -1227,6 +1425,7 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
       setShowSaveFunctionModal(false);
       setNamedFunctionName("");
       setNamedFunctionArgs("");
+      setNamedFunctionArgDraft("");
       setNamedFunctionDescription("");
     }, []);
 
@@ -1260,7 +1459,10 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
         if (!EXCEL_NAME_PATTERN.test(functionName) || CELL_REFERENCE_LIKE_PATTERN.test(functionName)) {
           throw new Error("Function name must be a valid Excel defined name and cannot look like a cell reference.");
         }
-        const lambdaFormula = buildNamedFunctionFormula(current, namedFunctionArgs);
+        const argsForSave = stringifyArgs(mergeArgsWithDraft(namedFunctionArgs, namedFunctionArgDraft));
+        setNamedFunctionArgs(argsForSave);
+        setNamedFunctionArgDraft("");
+        const lambdaFormula = buildNamedFunctionFormula(current, argsForSave);
         await saveNamedFunction(functionName, lambdaFormula);
         await loadSuggestions();
         const saved = namesRef.current.some((item) => item.toUpperCase() === functionName.toUpperCase());
@@ -1278,11 +1480,14 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
 
     const openPopoutWithCurrentState = async () => {
       const currentFormula = (editorRef.current?.getValue() ?? formulaText).trim();
+      const argsForPopout = stringifyArgs(mergeArgsWithDraft(namedFunctionArgs, namedFunctionArgDraft));
+      setNamedFunctionArgs(argsForPopout);
+      setNamedFunctionArgDraft("");
       await openFormulaEditorPopout({
         formula: currentFormula || "=",
         name: namedFunctionName.trim() || undefined,
         entryType: creationMode === "Function" ? "Function" : "Formula",
-        functionArgs: namedFunctionArgs,
+        functionArgs: argsForPopout,
         description: namedFunctionDescription,
         creationMode,
         authoringMode,
@@ -1328,6 +1533,7 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
         if (wizardTemplate === "LAMBDA") {
           setCreationMode("Function");
           setNamedFunctionArgs(parseLambdaArgs(wizardArgsInput).join(","));
+          setNamedFunctionArgDraft("");
         }
         setAuthoringMode("Editor");
       });
@@ -1341,13 +1547,34 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
         const lambdaFormula =
           authoringMode === "Wizard" && wizardTemplate === "LAMBDA"
             ? wizardPreview.formula
-            : buildNamedFunctionFormula((editorRef.current?.getValue() ?? formulaText).trim(), namedFunctionArgs);
+            : buildNamedFunctionFormula(
+                (editorRef.current?.getValue() ?? formulaText).trim(),
+                stringifyArgs(mergeArgsWithDraft(namedFunctionArgs, namedFunctionArgDraft))
+              );
         const invokeFormula = buildLambdaInvokeFormula(lambdaFormula, lambdaTestInputs);
+        setLastTestInvocation(invokeFormula);
         const result = await evaluateFormulaForLive(invokeFormula);
-        setLiveTestError("");
         setFormulaOutput(result);
         setLastTestedAt(new Date().toLocaleTimeString());
+        if (result.hasError) {
+          const errorText = getFirstErrorCell(result);
+          setLiveTestError(`Lambda test returned ${errorText}.`);
+          throw new Error(`Lambda invocation returned ${errorText}. Check arguments and LET/LAMBDA structure.`);
+        }
+        setLiveTestError("");
       });
+    };
+
+    const handleNamedArgInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+      if (event.key === " " || event.key === "Enter" || event.key === ",") {
+        event.preventDefault();
+        commitNamedFunctionArgDraft();
+        return;
+      }
+      if (event.key === "Backspace" && !namedFunctionArgDraft.trim() && namedFunctionArgPreview.length > 0) {
+        event.preventDefault();
+        removeNamedFunctionArgAt(namedFunctionArgPreview.length - 1);
+      }
     };
 
     React.useImperativeHandle(ref, () => ({
@@ -1411,316 +1638,384 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
 
           <div className={styles.modeRow}>
             <Text className={shared.mutedText}>Create:</Text>
-            <Select
-              className={styles.modeSelect}
-              value={creationMode}
-              onChange={(_, data) => setCreationMode(data.value as FormulaCreationMode)}
-            >
-              <option value="Formula">Formula</option>
-              <option value="Function">Function (LAMBDA)</option>
-            </Select>
+            <div className={styles.slicer}>
+              {(["Formula", "Function"] as FormulaCreationMode[]).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  className={`${styles.slicerBtn} ${creationMode === mode ? styles.slicerBtnActive : ""}`}
+                  onClick={() => setCreationMode(mode)}
+                >
+                  {mode === "Function" ? "Function (LAMBDA)" : "Formula"}
+                </button>
+              ))}
+            </div>
             <Text className={shared.mutedText}>Authoring:</Text>
-            <Select
-              className={styles.modeSelect}
-              value={authoringMode}
-              onChange={(_, data) => setAuthoringMode(data.value as FormulaAuthoringMode)}
-            >
-              <option value="Editor">Editor</option>
-              <option value="Wizard">Wizard</option>
-            </Select>
+            <div className={styles.slicer}>
+              {(["Editor", "Wizard"] as FormulaAuthoringMode[]).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  className={`${styles.slicerBtn} ${authoringMode === mode ? styles.slicerBtnActive : ""}`}
+                  onClick={() => setAuthoringMode(mode)}
+                >
+                  {mode}
+                </button>
+              ))}
+            </div>
           </div>
 
           {creationMode === "Function" ? (
-            <div className={styles.functionMetaGrid}>
-              <div>
-                <Text className={styles.modalLabel}>Function name</Text>
-                <Input
-                  placeholder="Function name (example: CalcMargin)"
-                  value={namedFunctionName}
-                  onChange={(_, data) => setNamedFunctionName(data.value)}
-                />
-              </div>
-              <div>
-                <Text className={styles.modalLabel}>Arguments (comma-separated)</Text>
-                <Input
-                  placeholder="table, lookupValue"
-                  value={namedFunctionArgs}
-                  onChange={(_, data) => setNamedFunctionArgs(data.value)}
-                />
-                {namedFunctionArgPreview.length > 0 ? (
-                  <div className={styles.chipRow}>
-                    {namedFunctionArgPreview.map((arg, index) => (
-                      <span key={`${arg}-${index.toString()}`} className={styles.chip}>
-                        {arg}
-                      </span>
-                    ))}
+            <div className={styles.widget}>
+              <button type="button" className={styles.widgetHeaderBtn} onClick={() => setMetaOpen((prev) => !prev)}>
+                <span>Function Metadata</span>
+                <span>{metaOpen ? "Collapse" : "Expand"}</span>
+              </button>
+              {metaOpen ? (
+                <div className={styles.widgetBody}>
+                  <div className={styles.functionMetaGrid}>
+                    <div>
+                      <Text className={styles.modalLabel}>Function name</Text>
+                      <Input
+                        placeholder="Function name (example: CalcMargin)"
+                        value={namedFunctionName}
+                        onChange={(_, data) => setNamedFunctionName(data.value)}
+                      />
+                    </div>
+                    <div>
+                      <Text className={styles.modalLabel}>Arguments (space creates a pill)</Text>
+                      <Input
+                        className={styles.argsInput}
+                        placeholder="Type argument and press Space"
+                        value={namedFunctionArgDraft}
+                        onChange={(_, data) => setNamedFunctionArgDraft(data.value)}
+                        onKeyDown={handleNamedArgInputKeyDown}
+                        onBlur={commitNamedFunctionArgDraft}
+                      />
+                      {namedFunctionArgPreview.length > 0 ? (
+                        <div className={styles.chipRow}>
+                          {namedFunctionArgPreview.map((arg, index) => (
+                            <span key={`${arg}-${index.toString()}`} className={styles.chip}>
+                              {arg}
+                              <button
+                                type="button"
+                                className={styles.chipBtn}
+                                onClick={() => removeNamedFunctionArgAt(index)}
+                                aria-label={`Remove ${arg}`}
+                              >
+                                x
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <Text className={shared.mutedText}>No arguments yet.</Text>
+                      )}
+                    </div>
+                    <div className={styles.fullRow}>
+                      <Text className={styles.modalLabel}>Description (optional)</Text>
+                      <Input
+                        placeholder="Description for your team docs"
+                        value={namedFunctionDescription}
+                        onChange={(_, data) => setNamedFunctionDescription(data.value)}
+                      />
+                    </div>
                   </div>
-                ) : null}
-              </div>
-              <div className={styles.fullRow}>
-                <Text className={styles.modalLabel}>Description (optional)</Text>
-                <Input
-                  placeholder="Description for your team docs"
-                  value={namedFunctionDescription}
-                  onChange={(_, data) => setNamedFunctionDescription(data.value)}
-                />
-              </div>
+                </div>
+              ) : null}
             </div>
           ) : null}
 
           {creationMode === "Function" && !(authoringMode === "Wizard" && wizardTemplate === "LET") ? (
-            <div className={styles.wizardCard}>
-              <Text className={shared.cardTitle}>Lambda Input Test</Text>
-              {activeLambdaArgs.length > 0 ? (
-                <div className={styles.lambdaTestGrid}>
-                  {activeLambdaArgs.map((arg, index) => (
-                    <div key={`${arg}-${index.toString()}`}>
-                      <Text className={styles.modalLabel}>{arg}</Text>
-                      <Input
-                        placeholder="Input expression"
-                        value={lambdaTestInputs[index] ?? ""}
-                        onChange={(_, data) =>
-                          setLambdaTestInputs((prev) => {
-                            const next = [...prev];
-                            next[index] = data.value;
-                            return next;
-                          })
-                        }
-                      />
+            <div className={styles.widget}>
+              <button
+                type="button"
+                className={styles.widgetHeaderBtn}
+                onClick={() => setLambdaTestOpen((prev) => !prev)}
+              >
+                <span>Lambda Input Test</span>
+                <span>{lambdaTestOpen ? "Collapse" : "Expand"}</span>
+              </button>
+              {lambdaTestOpen ? (
+                <div className={styles.widgetBody}>
+                  {activeLambdaArgs.length > 0 ? (
+                    <div className={styles.lambdaTestGrid}>
+                      {activeLambdaArgs.map((arg, index) => (
+                        <div key={`${arg}-${index.toString()}`}>
+                          <Text className={styles.modalLabel}>{arg}</Text>
+                          <Input
+                            placeholder="Input expression"
+                            value={lambdaTestInputs[index] ?? ""}
+                            onChange={(_, data) =>
+                              setLambdaTestInputs((prev) => {
+                                const next = [...prev];
+                                next[index] = data.value;
+                                return next;
+                              })
+                            }
+                          />
+                        </div>
+                      ))}
                     </div>
-                  ))}
+                  ) : (
+                    <Text className={shared.mutedText}>
+                      No explicit arguments defined. Test will invoke the lambda with no parameters.
+                    </Text>
+                  )}
+                  <div className={styles.actionRow}>
+                    <Button appearance="primary" size="small" onClick={() => void runLambdaInputTest()}>
+                      Run Lambda Test
+                    </Button>
+                  </div>
                 </div>
-              ) : (
-                <Text className={shared.mutedText}>
-                  No explicit arguments defined. Test will invoke the lambda with no parameters.
-                </Text>
-              )}
-              <div className={styles.actionRow}>
-                <Button appearance="primary" size="small" onClick={() => void runLambdaInputTest()}>
-                  Run Lambda Test
-                </Button>
-              </div>
+              ) : null}
             </div>
           ) : null}
 
           {authoringMode === "Editor" ? (
-            <div className={styles.editorShell}>
-            <div className={styles.overlayTop}>
-              <Button size="small" onClick={() => void runAction("Beautify formula", beautify)}>
-                Beautify
-              </Button>
-              <Button size="small" onClick={() => setIsEditorExpanded((prev) => !prev)}>
-                {isEditorExpanded ? "Use Smaller Editor" : "Expand Editor"}
-              </Button>
-              {!isPopout ? (
-                <Button size="small" onClick={() => void runAction("Open formula editor popout", openPopoutWithCurrentState)}>
-                  Open Pop-out
-                </Button>
+            <div className={styles.widget}>
+              <button type="button" className={styles.widgetHeaderBtn} onClick={() => setEditorOpen((prev) => !prev)}>
+                <span>Formula Editor</span>
+                <span>{editorOpen ? "Collapse" : "Expand"}</span>
+              </button>
+              {editorOpen ? (
+                <div className={styles.widgetBody}>
+                  <div className={styles.editorShell}>
+                    <div className={styles.overlayTop}>
+                      <Button size="small" onClick={() => void runAction("Beautify formula", beautify)}>
+                        Beautify
+                      </Button>
+                      <Button size="small" onClick={() => void runAction("Insert selection", insertSelection)}>
+                        Insert Selection
+                      </Button>
+                      <Button size="small" onClick={() => setIsEditorExpanded((prev) => !prev)}>
+                        {isEditorExpanded ? "Use Smaller Editor" : "Expand Editor"}
+                      </Button>
+                      {!isPopout ? (
+                        <Button
+                          size="small"
+                          onClick={() => void runAction("Open formula editor popout", openPopoutWithCurrentState)}
+                        >
+                          Open Pop-out
+                        </Button>
+                      ) : null}
+                      {!isPopout ? (
+                        <Button size="small" onClick={onOpenLegacy}>
+                          Legacy View
+                        </Button>
+                      ) : null}
+                    </div>
+
+                    <div className={styles.editorWrap}>
+                      {editorLoadError ? (
+                        <textarea
+                          aria-label="Formula editor fallback"
+                          className={styles.fallbackEditor}
+                          spellCheck={false}
+                          rows={10}
+                          style={{ height: editorHeight }}
+                          value={formulaText}
+                          onChange={(event) => setFormulaText(event.target.value)}
+                          onFocus={() => setEditorHasFocus(true)}
+                          onBlur={() => {
+                            setEditorHasFocus(false);
+                            void autoPullOnEditorBlur();
+                          }}
+                        />
+                      ) : editorReady ? (
+                        <Editor
+                          height={editorHeight}
+                          language={MONACO_LANGUAGE_ID}
+                          value={formulaText}
+                          beforeMount={beforeMount}
+                          onMount={onMount}
+                          theme="vs"
+                          options={{
+                            minimap: { enabled: false },
+                            scrollBeyondLastLine: false,
+                            fontSize: 13,
+                            lineHeight: editorLineHeight,
+                            lineNumbers: "on",
+                            wordWrap: "off",
+                            automaticLayout: true,
+                            suggestOnTriggerCharacters: true,
+                            quickSuggestions: { other: true, comments: false, strings: false },
+                            wordBasedSuggestions: "off",
+                            tabCompletion: "on",
+                            padding: {
+                              top: 38,
+                              bottom: 128,
+                            },
+                            suggest: {
+                              showWords: false,
+                              showSnippets: true,
+                              preview: true,
+                            },
+                          }}
+                        />
+                      ) : (
+                        <div className={styles.editorLoading} style={{ height: editorHeight }}>
+                          <Text className={shared.mutedText}>Loading formula editor...</Text>
+                        </div>
+                      )}
+                    </div>
+
+                    {!editorHasFocus ? (
+                      <div className={styles.actionDock}>
+                        <Text className={styles.overlayTitle}>Apply / Save</Text>
+                        <div className={styles.actionRow}>
+                          <Button
+                            appearance="primary"
+                            size="small"
+                            onClick={() => void runAction("Apply formula", applyToActiveCell)}
+                          >
+                            Apply Formula
+                          </Button>
+                          {creationMode === "Function" ? (
+                            <Button size="small" onClick={() => void saveCurrentAsNamedFunction()}>
+                              Save Function
+                            </Button>
+                          ) : (
+                            <Button size="small" onClick={() => setShowSaveFunctionModal(true)}>
+                              Save Named Function
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
               ) : null}
-              {!isPopout ? (
-                <Button size="small" onClick={onOpenLegacy}>
-                  Legacy View
-                </Button>
-              ) : null}
-            </div>
-
-            <div className={styles.editorWrap}>
-              {editorLoadError ? (
-                <textarea
-                  aria-label="Formula editor fallback"
-                  className={styles.fallbackEditor}
-                  spellCheck={false}
-                  rows={10}
-                  style={{ height: editorHeight }}
-                  value={formulaText}
-                  onChange={(event) => setFormulaText(event.target.value)}
-                />
-              ) : editorReady ? (
-                <Editor
-                  height={editorHeight}
-                  language={MONACO_LANGUAGE_ID}
-                  value={formulaText}
-                  beforeMount={beforeMount}
-                  onMount={onMount}
-                  theme="vs"
-                  options={{
-                    minimap: { enabled: false },
-                    scrollBeyondLastLine: false,
-                    fontSize: 13,
-                    lineHeight: editorLineHeight,
-                    lineNumbers: "on",
-                    wordWrap: "off",
-                    automaticLayout: true,
-                    suggestOnTriggerCharacters: true,
-                    quickSuggestions: { other: true, comments: false, strings: false },
-                    wordBasedSuggestions: "off",
-                    tabCompletion: "on",
-                    padding: {
-                      top: 38,
-                      bottom: 128,
-                    },
-                    suggest: {
-                      showWords: false,
-                      showSnippets: true,
-                      preview: true,
-                    },
-                  }}
-                />
-              ) : (
-                <div className={styles.editorLoading} style={{ height: editorHeight }}>
-                  <Text className={shared.mutedText}>Loading formula editor...</Text>
-                </div>
-              )}
-            </div>
-
-            <div className={styles.overlayBottom}>
-              <div className={styles.overlayCluster}>
-                <Text className={styles.overlayTitle}>Pull Into Editor</Text>
-                <div className={styles.actionRow}>
-                  <Button
-                    appearance="primary"
-                    size="small"
-                    onClick={() =>
-                      void runAction("Pull formula", async () => {
-                        await pullFromActiveCell(true);
-                      })
-                    }
-                  >
-                    Pull In
-                  </Button>
-                  <Button size="small" onClick={() => void runAction("Insert selection", insertSelection)}>
-                    Insert Selection
-                  </Button>
-                </div>
-              </div>
-
-              <div className={styles.overlayCluster}>
-                <Text className={styles.overlayTitle}>Apply / Save</Text>
-                <div className={styles.actionRow}>
-                  <Button appearance="primary" size="small" onClick={() => void runAction("Apply formula", applyToActiveCell)}>
-                    Apply Formula
-                  </Button>
-                  {creationMode === "Function" ? (
-                    <Button size="small" onClick={() => void saveCurrentAsNamedFunction()}>
-                      Save Function
-                    </Button>
-                  ) : (
-                    <Button size="small" onClick={() => setShowSaveFunctionModal(true)}>
-                      Save Named Function
-                    </Button>
-                  )}
-                </div>
-              </div>
-            </div>
             </div>
           ) : (
-            <div className={styles.wizardCard}>
-              <div className={styles.modeRow}>
-                <Text className={shared.mutedText}>Wizard type:</Text>
-                <Select
-                  className={styles.modeSelect}
-                  value={wizardTemplate}
-                  onChange={(_, data) => setWizardTemplate(data.value as WizardTemplate)}
-                >
-                  <option value="LAMBDA">LAMBDA Builder</option>
-                  <option value="LET">LET Builder</option>
-                </Select>
-              </div>
-              {wizardTemplate === "LAMBDA" ? (
-                <div>
-                  <Text className={styles.modalLabel}>Arguments (comma-separated)</Text>
-                  <Input
-                    placeholder="table, lookupValue"
-                    value={wizardArgsInput}
-                    onChange={(_, data) => setWizardArgsInput(data.value)}
-                  />
+            <div className={styles.widget}>
+              <button type="button" className={styles.widgetHeaderBtn} onClick={() => setWizardOpen((prev) => !prev)}>
+                <span>Wizard Builder</span>
+                <span>{wizardOpen ? "Collapse" : "Expand"}</span>
+              </button>
+              {wizardOpen ? (
+                <div className={styles.widgetBody}>
+                  <div className={styles.modeRow}>
+                    <Text className={shared.mutedText}>Wizard type:</Text>
+                    <Select
+                      className={styles.modeSelect}
+                      value={wizardTemplate}
+                      onChange={(_, data) => setWizardTemplate(data.value as WizardTemplate)}
+                    >
+                      <option value="LAMBDA">LAMBDA Builder</option>
+                      <option value="LET">LET Builder</option>
+                    </Select>
+                  </div>
+                  {wizardTemplate === "LAMBDA" ? (
+                    <div>
+                      <Text className={styles.modalLabel}>Arguments (comma-separated)</Text>
+                      <Input
+                        placeholder="table, lookupValue"
+                        value={wizardArgsInput}
+                        onChange={(_, data) => setWizardArgsInput(data.value)}
+                      />
+                    </div>
+                  ) : null}
+                  <div className={styles.modeRow}>
+                    <Text className={styles.modalLabel}>Variables</Text>
+                    <Button size="small" onClick={addWizardVariable}>
+                      + Add Variable
+                    </Button>
+                  </div>
+                  {wizardVariables.map((item) => (
+                    <div key={item.id} className={styles.wizardVarRow}>
+                      <Input
+                        placeholder="name"
+                        value={item.name}
+                        onChange={(_, data) => updateWizardVariable(item.id, "name", data.value)}
+                      />
+                      <Input
+                        placeholder="expression/value"
+                        value={item.expression}
+                        onChange={(_, data) => updateWizardVariable(item.id, "expression", data.value)}
+                      />
+                      <Button size="small" onClick={() => removeWizardVariable(item.id)}>
+                        Remove
+                      </Button>
+                    </div>
+                  ))}
+                  <div>
+                    <Text className={styles.modalLabel}>
+                      {wizardTemplate === "LAMBDA" ? "Return expression" : "LET final expression"}
+                    </Text>
+                    <Input
+                      placeholder="Result expression"
+                      value={wizardReturnExpression}
+                      onChange={(_, data) => setWizardReturnExpression(data.value)}
+                    />
+                  </div>
+                  <div>
+                    <Text className={styles.modalLabel}>Wizard preview</Text>
+                    {wizardPreview.error ? (
+                      <Text className={shared.errorText}>{wizardPreview.error}</Text>
+                    ) : (
+                      <pre className={styles.wizardPreview}>{wizardPreview.formula}</pre>
+                    )}
+                  </div>
+                  <div className={styles.actionRow}>
+                    <Button appearance="primary" onClick={() => void applyWizardToEditor()}>
+                      Build Into Editor
+                    </Button>
+                    <Button onClick={() => setAuthoringMode("Editor")}>Switch To Editor</Button>
+                  </div>
                 </div>
               ) : null}
-              <div className={styles.modeRow}>
-                <Text className={styles.modalLabel}>Variables</Text>
-                <Button size="small" onClick={addWizardVariable}>
-                  + Add Variable
-                </Button>
-              </div>
-              {wizardVariables.map((item) => (
-                <div key={item.id} className={styles.wizardVarRow}>
-                  <Input
-                    placeholder="name"
-                    value={item.name}
-                    onChange={(_, data) => updateWizardVariable(item.id, "name", data.value)}
-                  />
-                  <Input
-                    placeholder="expression/value"
-                    value={item.expression}
-                    onChange={(_, data) => updateWizardVariable(item.id, "expression", data.value)}
-                  />
-                  <Button size="small" onClick={() => removeWizardVariable(item.id)}>
-                    Remove
-                  </Button>
-                </div>
-              ))}
-              <div>
-                <Text className={styles.modalLabel}>
-                  {wizardTemplate === "LAMBDA" ? "Return expression" : "LET final expression"}
-                </Text>
-                <Input
-                  placeholder="Result expression"
-                  value={wizardReturnExpression}
-                  onChange={(_, data) => setWizardReturnExpression(data.value)}
-                />
-              </div>
-              <div>
-                <Text className={styles.modalLabel}>Wizard preview</Text>
-                {wizardPreview.error ? (
-                  <Text className={shared.errorText}>{wizardPreview.error}</Text>
-                ) : (
-                  <pre className={styles.wizardPreview}>{wizardPreview.formula}</pre>
-                )}
-              </div>
-              <div className={styles.actionRow}>
-                <Button appearance="primary" onClick={() => void applyWizardToEditor()}>
-                  Build Into Editor
-                </Button>
-                <Button onClick={() => setAuthoringMode("Editor")}>Switch To Editor</Button>
-              </div>
             </div>
           )}
 
-          <div className={styles.liveTestHeader}>
-            <Text className={shared.cardTitle}>Live Test Output</Text>
-            <Text className={shared.mutedText}>
-              {liveTestBusy
-                ? "Testing..."
-                : liveTestError
-                  ? `Last test failed${lastTestedAt ? ` at ${lastTestedAt}` : ""}`
-                  : lastTestedAt
-                    ? `Auto-tested at ${lastTestedAt}`
-                    : "Waiting for formula input"}
-            </Text>
-          </div>
+          <div className={styles.widget}>
+            <button type="button" className={styles.widgetHeaderBtn} onClick={() => setLiveTestOpen((prev) => !prev)}>
+              <span>Live Test Output</span>
+              <span>{liveTestOpen ? "Collapse" : "Expand"}</span>
+            </button>
+            {liveTestOpen ? (
+              <div className={styles.widgetBody}>
+                <div className={styles.liveTestHeader}>
+                  <Text className={shared.cardTitle}>Live Test Output</Text>
+                  <Text className={shared.mutedText}>
+                    {liveTestBusy
+                      ? "Testing..."
+                      : liveTestError
+                        ? `Last test failed${lastTestedAt ? ` at ${lastTestedAt}` : ""}`
+                        : lastTestedAt
+                          ? `Auto-tested at ${lastTestedAt}`
+                          : "Waiting for formula input"}
+                  </Text>
+                </div>
 
-          {liveTestError ? <Text className={shared.errorText}>{liveTestError}</Text> : null}
+                {lastTestInvocation ? (
+                  <Text className={styles.invocationText}>Invocation: {lastTestInvocation}</Text>
+                ) : null}
+                {liveTestError ? <Text className={shared.errorText}>{liveTestError}</Text> : null}
 
-          <div className={styles.outputWrap}>
-            {formulaOutput ? (
-              <table className={styles.outputTable}>
-                <tbody>
-                  {formulaOutput.values.map((row, rowIndex) => (
-                    <tr key={rowIndex}>
-                      {row.map((cell, colIndex) => (
-                        <td key={`${rowIndex}-${colIndex}`} className={styles.outputCell}>
-                          {cell === null ? "" : String(cell)}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            ) : (
-              <div className={styles.outputCell}>
-                <Text className={shared.mutedText}>Live test will render results here as you edit.</Text>
+                <div className={styles.outputWrap}>
+                  {formulaOutput ? (
+                    <table className={styles.outputTable}>
+                      <tbody>
+                        {formulaOutput.values.map((row, rowIndex) => (
+                          <tr key={rowIndex}>
+                            {row.map((cell, colIndex) => (
+                              <td key={`${rowIndex}-${colIndex}`} className={styles.outputCell}>
+                                {cell === null ? "" : String(cell)}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  ) : (
+                    <div className={styles.outputCell}>
+                      <Text className={shared.mutedText}>Live test will render results here as you edit.</Text>
+                    </div>
+                  )}
+                </div>
               </div>
-            )}
+            ) : null}
           </div>
 
           {status ? <Text className={statusClass}>{status}</Text> : null}

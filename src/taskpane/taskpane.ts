@@ -1,4 +1,4 @@
-/* global Excel console */
+/* global Excel Office console */
 
 export interface NamedRangeRecord {
   id: string;
@@ -32,6 +32,8 @@ export interface TableRecord {
 export interface FormulaEvaluationResult {
   address: string;
   values: (string | number | boolean | null)[][];
+  valueTypes: string[][];
+  hasError: boolean;
 }
 
 export interface ActiveCellFormulaState {
@@ -39,6 +41,46 @@ export interface ActiveCellFormulaState {
   address: string;
   formula: string;
   hasFormula: boolean;
+}
+
+export interface WorkbookQueryRecord {
+  name: string;
+  loadedTo: string;
+  loadedToDataModel: boolean;
+  refreshDate: string;
+  rowsLoadedCount: number;
+  error: string;
+}
+
+export interface QueryRefreshResult {
+  refreshed: boolean;
+  method: "DataConnections.refreshAll" | "Unsupported";
+  warnings: string[];
+}
+
+export interface ModelBuilderParameterInput {
+  label: string;
+  desiredName: string;
+  valueMode: "manual" | "formula";
+  value: string;
+  listValues: string;
+}
+
+export interface ModelBuilderApplyRequest {
+  anchorSheet: string;
+  anchorAddress: string;
+  parameters: ModelBuilderParameterInput[];
+}
+
+export interface ModelBuilderApplyResult {
+  anchorSheet: string;
+  anchorAddress: string;
+  created: Array<{
+    label: string;
+    finalName: string;
+    valueAddress: string;
+    validationListName?: string;
+  }>;
 }
 
 export interface SheetFormatStyle {
@@ -414,6 +456,119 @@ function normalizeFormulaExpression(formulaInput: string): string {
     return "";
   }
   return trimmed.startsWith("=") ? trimmed : `=${trimmed}`;
+}
+
+function canUseExcelApi(minVersion: string): boolean {
+  try {
+    return Office.context.requirements.isSetSupported("ExcelApi", minVersion);
+  } catch {
+    return false;
+  }
+}
+
+function buildArrayFormulaSeparatorCandidates(formulaInput: string): string[] {
+  const normalized = normalizeFormulaExpression(formulaInput);
+  const body = normalized.replace(/^=/, "").trim();
+  if (!/^\{[\s\S]*\}$/.test(body)) {
+    return [normalized];
+  }
+
+  const swapSeparators = (input: string, from: ";" | ",", to: ";" | ","): string => {
+    let output = "";
+    let inString = false;
+    for (let index = 0; index < input.length; index += 1) {
+      const ch = input[index];
+      if (ch === '"') {
+        output += ch;
+        if (inString && input[index + 1] === '"') {
+          output += '"';
+          index += 1;
+          continue;
+        }
+        inString = !inString;
+        continue;
+      }
+      if (!inString && ch === from) {
+        output += to;
+      } else {
+        output += ch;
+      }
+    }
+    return output;
+  };
+
+  const candidates = new Set<string>([normalized]);
+  if (body.includes(";")) {
+    candidates.add(`=${swapSeparators(body, ";", ",")}`);
+  }
+  if (body.includes(",")) {
+    candidates.add(`=${swapSeparators(body, ",", ";")}`);
+  }
+  return Array.from(candidates);
+}
+
+function parseInlineListValues(input: string): string[] {
+  return input
+    .split(/[\r\n,;]+/)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
+function quoteArrayLiteralValue(value: string): string {
+  if (/^-?\d+(\.\d+)?$/.test(value)) {
+    return value;
+  }
+  if (/^(TRUE|FALSE)$/i.test(value)) {
+    return value.toUpperCase();
+  }
+  return `"${value.replace(/"/g, '""')}"`;
+}
+
+function buildVerticalArrayFormula(values: string[], separator: ";" | ","): string {
+  return `={${values.map((value) => quoteArrayLiteralValue(value)).join(separator)}}`;
+}
+
+function toModelSafeName(value: string): string {
+  const normalized = value
+    .replace(/[^A-Za-z0-9_.\\]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+/, "")
+    .replace(/_+$/, "");
+  let candidate = normalized || "Parameter";
+  if (!/^[A-Za-z_\\]/.test(candidate)) {
+    candidate = `_${candidate}`;
+  }
+  if (/^[A-Za-z]{1,3}\d+$/i.test(candidate)) {
+    candidate = `_${candidate}`;
+  }
+  return candidate;
+}
+
+function toUniqueName(candidate: string, taken: Set<string>): string {
+  const base = candidate.trim() || "Parameter";
+  let next = base;
+  let index = 2;
+  while (taken.has(next.toUpperCase())) {
+    next = `${base}_${index.toString()}`;
+    index += 1;
+  }
+  taken.add(next.toUpperCase());
+  return next;
+}
+
+function columnIndexToName(index: number): string {
+  let remaining = index + 1;
+  let output = "";
+  while (remaining > 0) {
+    const modulo = (remaining - 1) % 26;
+    output = String.fromCharCode(65 + modulo) + output;
+    remaining = Math.floor((remaining - modulo) / 26);
+  }
+  return output;
+}
+
+function toAbsoluteCellAddress(rowIndex: number, columnIndex: number): string {
+  return `$${columnIndexToName(columnIndex)}$${(rowIndex + 1).toString()}`;
 }
 
 function toQualifiedAddress(sheet: string, address: string): string {
@@ -2631,19 +2786,41 @@ export async function updateNamedRange(
   oldName: string,
   newName: string,
   address: string,
-  fallbackSheet: string
+  fallbackSheet: string,
+  referenceType: "Reference" | "Formula" = "Reference"
 ) {
-  await Excel.run(async (context) => {
-    const collection =
-      scopeType === "Workbook"
-        ? context.workbook.names
-        : context.workbook.worksheets.getItem(scope).names;
+  const candidates =
+    referenceType === "Formula"
+      ? buildArrayFormulaSeparatorCandidates(address)
+      : [normalizeReference(address, fallbackSheet)];
 
-    const oldItem = collection.getItem(oldName);
-    oldItem.delete();
-    collection.add(newName, normalizeReference(address, fallbackSheet));
-    await context.sync();
-  });
+  let lastError: unknown = null;
+  for (const candidate of candidates) {
+    try {
+      await Excel.run(async (context) => {
+        const collection =
+          scopeType === "Workbook"
+            ? context.workbook.names
+            : context.workbook.worksheets.getItem(scope).names;
+
+        if (oldName.toUpperCase() === newName.toUpperCase()) {
+          const item = collection.getItem(oldName);
+          item.formula = candidate;
+          await context.sync();
+          return;
+        }
+
+        collection.add(newName, candidate);
+        collection.getItem(oldName).delete();
+        await context.sync();
+      });
+      return;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("Unable to update named range.");
 }
 
 export async function addNamedRange(
@@ -2654,20 +2831,30 @@ export async function addNamedRange(
   fallbackSheet: string,
   referenceType: "Reference" | "Formula" = "Reference"
 ) {
-  await Excel.run(async (context) => {
-    const collection =
-      scopeType === "Workbook"
-        ? context.workbook.names
-        : context.workbook.worksheets.getItem(scope).names;
+  const candidates =
+    referenceType === "Formula"
+      ? buildArrayFormulaSeparatorCandidates(address)
+      : [normalizeReference(address, fallbackSheet)];
 
-    collection.add(
-      name,
-      referenceType === "Formula"
-        ? normalizeFormulaExpression(address)
-        : normalizeReference(address, fallbackSheet)
-    );
-    await context.sync();
-  });
+  let lastError: unknown = null;
+  for (const candidate of candidates) {
+    try {
+      await Excel.run(async (context) => {
+        const collection =
+          scopeType === "Workbook"
+            ? context.workbook.names
+            : context.workbook.worksheets.getItem(scope).names;
+
+        collection.add(name, candidate);
+        await context.sync();
+      });
+      return;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("Unable to add named range.");
 }
 
 export async function deleteNamedRange(
@@ -2810,6 +2997,166 @@ export async function saveNamedFunction(name: string, lambdaFormula: string) {
   });
 }
 
+export async function listWorkbookQueries(): Promise<WorkbookQueryRecord[]> {
+  if (!canUseExcelApi("1.14")) {
+    return [];
+  }
+
+  return Excel.run(async (context) => {
+    const queries = context.workbook.queries;
+    queries.load("items/name,items/loadedTo,items/loadedToDataModel,items/refreshDate,items/rowsLoadedCount,items/error");
+    await context.sync();
+
+    return queries.items
+      .map((query) => {
+        const refreshDate =
+          query.refreshDate instanceof Date && !Number.isNaN(query.refreshDate.valueOf())
+            ? query.refreshDate.toLocaleString()
+            : "";
+        const error = query.error && query.error !== Excel.QueryError.none ? String(query.error) : "";
+        return {
+          name: query.name,
+          loadedTo: String(query.loadedTo || ""),
+          loadedToDataModel: Boolean(query.loadedToDataModel),
+          refreshDate,
+          rowsLoadedCount: query.rowsLoadedCount,
+          error,
+        } as WorkbookQueryRecord;
+      })
+      .sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base" }));
+  });
+}
+
+export async function refreshWorkbookQueries(): Promise<QueryRefreshResult> {
+  if (!canUseExcelApi("1.7")) {
+    return {
+      refreshed: false,
+      method: "Unsupported",
+      warnings: ["ExcelApi 1.7 is unavailable. Cannot trigger workbook data connection refresh."],
+    };
+  }
+
+  await Excel.run(async (context) => {
+    context.workbook.dataConnections.refreshAll();
+    await context.sync();
+  });
+
+  const warnings = [
+    "Used DataConnections.refreshAll(). Excel JS does not expose a dedicated direct Power Query refresh API in this surface.",
+  ];
+  if (!canUseExcelApi("1.14")) {
+    warnings.push("ExcelApi 1.14 query metadata is unavailable on this host.");
+  }
+
+  return {
+    refreshed: true,
+    method: "DataConnections.refreshAll",
+    warnings,
+  };
+}
+
+export async function applyModelBuilderParameters(
+  request: ModelBuilderApplyRequest
+): Promise<ModelBuilderApplyResult> {
+  const parameters = request.parameters.filter(
+    (item) => item.label.trim() || item.desiredName.trim() || item.value.trim() || item.listValues.trim()
+  );
+  if (parameters.length === 0) {
+    throw new Error("Add at least one parameter before applying.");
+  }
+
+  return Excel.run(async (context) => {
+    const sheet = context.workbook.worksheets.getItem(request.anchorSheet);
+    const anchorAddress = splitQualifiedAddress(request.anchorAddress).address || request.anchorAddress;
+    const anchorCell = sheet.getRange(anchorAddress).getCell(0, 0);
+    anchorCell.load("rowIndex,columnIndex,address,worksheet/name");
+
+    const workbookNames = context.workbook.names;
+    workbookNames.load("items/name");
+
+    const metaSheetName = "__WBM_META";
+    const metaSheetOrNull = context.workbook.worksheets.getItemOrNullObject(metaSheetName);
+    metaSheetOrNull.load("name");
+
+    await context.sync();
+
+    const metaSheet = metaSheetOrNull.isNullObject
+      ? context.workbook.worksheets.add(metaSheetName)
+      : (metaSheetOrNull as Excel.Worksheet);
+    metaSheet.visibility = Excel.SheetVisibility.hidden;
+
+    const metaUsedRange = metaSheet.getUsedRangeOrNullObject(true);
+    metaUsedRange.load("columnCount");
+    await context.sync();
+
+    let listColumnCursor = metaUsedRange.isNullObject ? 3 : Math.max(metaUsedRange.columnCount + 1, 3);
+    const takenNames = new Set<string>(workbookNames.items.map((item) => item.name.toUpperCase()));
+    const created: ModelBuilderApplyResult["created"] = [];
+
+    parameters.forEach((parameter, index) => {
+      const rowIndex = anchorCell.rowIndex + index;
+      const labelCell = sheet.getRangeByIndexes(rowIndex, anchorCell.columnIndex, 1, 1);
+      const valueCell = sheet.getRangeByIndexes(rowIndex, anchorCell.columnIndex + 1, 1, 1);
+
+      const label = parameter.label.trim() || `Parameter ${index + 1}`;
+      labelCell.values = [[label]];
+
+      if (parameter.valueMode === "formula") {
+        const normalizedFormula = normalizeFormulaExpression(parameter.value.trim() || "0");
+        valueCell.formulas = [[normalizedFormula]];
+      } else {
+        valueCell.values = [[parameter.value]];
+      }
+
+      const preferredName = toModelSafeName(parameter.desiredName.trim() || label);
+      const finalName = toUniqueName(preferredName, takenNames);
+      const valueAddress = toAbsoluteCellAddress(rowIndex, anchorCell.columnIndex + 1);
+      context.workbook.names.add(finalName, `=${quoteSheetName(anchorCell.worksheet.name)}!${valueAddress}`);
+
+      let validationListName: string | undefined;
+      const listValues = parseInlineListValues(parameter.listValues);
+      if (listValues.length > 0) {
+        validationListName = toUniqueName(toModelSafeName(`${finalName}_list`), takenNames);
+        const listRange = metaSheet.getRangeByIndexes(0, listColumnCursor, listValues.length, 1);
+        listRange.values = listValues.map((value) => [value]);
+
+        const startAddress = toAbsoluteCellAddress(0, listColumnCursor);
+        const endAddress = toAbsoluteCellAddress(listValues.length - 1, listColumnCursor);
+        context.workbook.names.add(
+          validationListName,
+          `=${quoteSheetName(metaSheetName)}!${startAddress}:${endAddress}`
+        );
+
+        valueCell.dataValidation.clear();
+        valueCell.dataValidation.rule = {
+          list: {
+            inCellDropDown: true,
+            source: `=${validationListName}`,
+          },
+        };
+        listColumnCursor += 1;
+      } else {
+        valueCell.dataValidation.clear();
+      }
+
+      created.push({
+        label,
+        finalName,
+        valueAddress: `${quoteSheetName(anchorCell.worksheet.name)}!${valueAddress}`,
+        validationListName,
+      });
+    });
+
+    await context.sync();
+
+    return {
+      anchorSheet: anchorCell.worksheet.name,
+      anchorAddress: anchorCell.address,
+      created,
+    };
+  });
+}
+
 export async function updateTableName(sheetName: string, oldName: string, newName: string) {
   await Excel.run(async (context) => {
     const table = context.workbook.worksheets.getItem(sheetName).tables.getItem(oldName);
@@ -2911,17 +3258,23 @@ export async function evaluateFormula(formulaText: string): Promise<FormulaEvalu
     await context.sync();
 
     const output = sheet.getUsedRangeOrNullObject(true);
-    output.load("address,rowCount,columnCount,values");
+    output.load("address,rowCount,columnCount,values,valueTypes");
     await context.sync();
 
     if (output.isNullObject) {
-      return { address: "A1", values: [[""]] };
+      return { address: "A1", values: [[""]], valueTypes: [["Empty"]], hasError: false };
     }
 
     const values = output.values as (string | number | boolean | null)[][];
+    const valueTypes = (output.valueTypes as Excel.RangeValueType[][]).map((row) =>
+      row.map((item) => String(item))
+    );
+    const hasError = valueTypes.some((row) => row.some((item) => item === Excel.RangeValueType.error || item === "Error"));
     const result: FormulaEvaluationResult = {
       address: output.address,
       values,
+      valueTypes,
+      hasError,
     };
 
     output.clear(Excel.ClearApplyTo.contents);
