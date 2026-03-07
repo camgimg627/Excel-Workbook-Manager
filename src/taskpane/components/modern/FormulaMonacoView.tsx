@@ -135,6 +135,7 @@ interface ActiveCellState {
 type FormulaCreationMode = "Formula" | "Function";
 type FormulaAuthoringMode = "Editor" | "Wizard";
 type WizardTemplate = "LAMBDA" | "LET";
+type FormulaSubTab = "metadata" | "lambda-test" | "editor" | "wizard" | "live-output";
 
 interface WizardLetVariable {
   id: string;
@@ -289,27 +290,31 @@ const useStyles = makeStyles({
     gap: "10px",
     flexWrap: "wrap",
   },
-  widget: {
+  subTabBar: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "8px",
+  },
+  subTabBtn: {
     borderRadius: "8px",
     border: `1px solid ${MODERN_TOKENS.colorBorder}`,
-    backgroundColor: "#fff",
-    display: "grid",
-  },
-  widgetHeaderBtn: {
-    border: "none",
-    backgroundColor: "transparent",
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    width: "100%",
-    padding: "10px 12px",
-    cursor: "pointer",
-    color: MODERN_TOKENS.colorText,
-    fontWeight: 600,
+    backgroundColor: "#FFFFFF",
+    color: MODERN_TOKENS.colorTextMuted,
     fontSize: "12px",
+    fontWeight: 600,
+    padding: "6px 10px",
+    cursor: "pointer",
+    textTransform: "none",
   },
-  widgetBody: {
-    borderTop: `1px solid ${MODERN_TOKENS.colorBorder}`,
+  subTabBtnActive: {
+    backgroundColor: "#E8F4EA",
+    border: "1px solid #B9D9BD",
+    color: MODERN_TOKENS.colorBrandStrong,
+  },
+  subTabPanel: {
+    borderRadius: "8px",
+    border: `1px solid ${MODERN_TOKENS.colorBorder}`,
+    backgroundColor: "#FFFFFF",
     padding: "10px 12px",
     display: "grid",
     gap: "10px",
@@ -747,11 +752,7 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
     const [lastTestInvocation, setLastTestInvocation] = useState<string>("");
     const [isEditorExpanded, setIsEditorExpanded] = useState<boolean>(false);
     const [editorHasFocus, setEditorHasFocus] = useState<boolean>(false);
-    const [metaOpen, setMetaOpen] = useState<boolean>(true);
-    const [lambdaTestOpen, setLambdaTestOpen] = useState<boolean>(false);
-    const [editorOpen, setEditorOpen] = useState<boolean>(true);
-    const [wizardOpen, setWizardOpen] = useState<boolean>(false);
-    const [liveTestOpen, setLiveTestOpen] = useState<boolean>(true);
+    const [activeSubTab, setActiveSubTab] = useState<FormulaSubTab | null>("editor");
 
     const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
     const monacoRef = useRef<typeof Monaco | null>(null);
@@ -835,6 +836,28 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
       }
       return effectiveNamedFunctionArgs;
     }, [authoringMode, wizardArgsInput, wizardTemplate, effectiveNamedFunctionArgs]);
+    const availableSubTabs = useMemo<Array<{ key: FormulaSubTab; label: string }>>(() => {
+      const tabs: Array<{ key: FormulaSubTab; label: string }> = [];
+      if (creationMode === "Function") {
+        tabs.push({ key: "metadata", label: "Function Metadata" });
+      }
+      if (creationMode === "Function" && !(authoringMode === "Wizard" && wizardTemplate === "LET")) {
+        tabs.push({ key: "lambda-test", label: "Lambda Test" });
+      }
+      tabs.push(authoringMode === "Editor" ? { key: "editor", label: "Editor" } : { key: "wizard", label: "Wizard" });
+      tabs.push({ key: "live-output", label: "Live Output" });
+      return tabs;
+    }, [authoringMode, creationMode, wizardTemplate]);
+
+    useEffect(() => {
+      if (!activeSubTab) {
+        return;
+      }
+      if (availableSubTabs.some((tab) => tab.key === activeSubTab)) {
+        return;
+      }
+      setActiveSubTab(availableSubTabs[0]?.key ?? null);
+    }, [activeSubTab, availableSubTabs]);
 
     useEffect(() => {
       let disposed = false;
@@ -1665,79 +1688,76 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
             </div>
           </div>
 
-          {creationMode === "Function" ? (
-            <div className={styles.widget}>
-              <button type="button" className={styles.widgetHeaderBtn} onClick={() => setMetaOpen((prev) => !prev)}>
-                <span>Function Metadata</span>
-                <span>{metaOpen ? "Collapse" : "Expand"}</span>
+          <div className={styles.subTabBar}>
+            {availableSubTabs.map((tab) => (
+              <button
+                key={tab.key}
+                type="button"
+                className={`${styles.subTabBtn} ${activeSubTab === tab.key ? styles.subTabBtnActive : ""}`}
+                onClick={() => setActiveSubTab((prev) => (prev === tab.key ? null : tab.key))}
+              >
+                {tab.label}
               </button>
-              {metaOpen ? (
-                <div className={styles.widgetBody}>
-                  <div className={styles.functionMetaGrid}>
-                    <div>
-                      <Text className={styles.modalLabel}>Function name</Text>
-                      <Input
-                        placeholder="Function name (example: CalcMargin)"
-                        value={namedFunctionName}
-                        onChange={(_, data) => setNamedFunctionName(data.value)}
-                      />
-                    </div>
-                    <div>
-                      <Text className={styles.modalLabel}>Arguments (space creates a pill)</Text>
-                      <Input
-                        className={styles.argsInput}
-                        placeholder="Type argument and press Space"
-                        value={namedFunctionArgDraft}
-                        onChange={(_, data) => setNamedFunctionArgDraft(data.value)}
-                        onKeyDown={handleNamedArgInputKeyDown}
-                        onBlur={commitNamedFunctionArgDraft}
-                      />
-                      {namedFunctionArgPreview.length > 0 ? (
-                        <div className={styles.chipRow}>
-                          {namedFunctionArgPreview.map((arg, index) => (
-                            <span key={`${arg}-${index.toString()}`} className={styles.chip}>
-                              {arg}
-                              <button
-                                type="button"
-                                className={styles.chipBtn}
-                                onClick={() => removeNamedFunctionArgAt(index)}
-                                aria-label={`Remove ${arg}`}
-                              >
-                                x
-                              </button>
-                            </span>
-                          ))}
-                        </div>
-                      ) : (
-                        <Text className={shared.mutedText}>No arguments yet.</Text>
-                      )}
-                    </div>
-                    <div className={styles.fullRow}>
-                      <Text className={styles.modalLabel}>Description (optional)</Text>
-                      <Input
-                        placeholder="Description for your team docs"
-                        value={namedFunctionDescription}
-                        onChange={(_, data) => setNamedFunctionDescription(data.value)}
-                      />
-                    </div>
+            ))}
+          </div>
+
+          {activeSubTab ? (
+            <div className={styles.subTabPanel}>
+              {activeSubTab === "metadata" && creationMode === "Function" ? (
+                <div className={styles.functionMetaGrid}>
+                  <div>
+                    <Text className={styles.modalLabel}>Function name</Text>
+                    <Input
+                      placeholder="Function name (example: CalcMargin)"
+                      value={namedFunctionName}
+                      onChange={(_, data) => setNamedFunctionName(data.value)}
+                    />
+                  </div>
+                  <div>
+                    <Text className={styles.modalLabel}>Arguments (space creates a pill)</Text>
+                    <Input
+                      className={styles.argsInput}
+                      placeholder="Type argument and press Space"
+                      value={namedFunctionArgDraft}
+                      onChange={(_, data) => setNamedFunctionArgDraft(data.value)}
+                      onKeyDown={handleNamedArgInputKeyDown}
+                      onBlur={commitNamedFunctionArgDraft}
+                    />
+                    {namedFunctionArgPreview.length > 0 ? (
+                      <div className={styles.chipRow}>
+                        {namedFunctionArgPreview.map((arg, index) => (
+                          <span key={`${arg}-${index.toString()}`} className={styles.chip}>
+                            {arg}
+                            <button
+                              type="button"
+                              className={styles.chipBtn}
+                              onClick={() => removeNamedFunctionArgAt(index)}
+                              aria-label={`Remove ${arg}`}
+                            >
+                              x
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <Text className={shared.mutedText}>No arguments yet.</Text>
+                    )}
+                  </div>
+                  <div className={styles.fullRow}>
+                    <Text className={styles.modalLabel}>Description (optional)</Text>
+                    <Input
+                      placeholder="Description for your team docs"
+                      value={namedFunctionDescription}
+                      onChange={(_, data) => setNamedFunctionDescription(data.value)}
+                    />
                   </div>
                 </div>
               ) : null}
-            </div>
-          ) : null}
 
-          {creationMode === "Function" && !(authoringMode === "Wizard" && wizardTemplate === "LET") ? (
-            <div className={styles.widget}>
-              <button
-                type="button"
-                className={styles.widgetHeaderBtn}
-                onClick={() => setLambdaTestOpen((prev) => !prev)}
-              >
-                <span>Lambda Input Test</span>
-                <span>{lambdaTestOpen ? "Collapse" : "Expand"}</span>
-              </button>
-              {lambdaTestOpen ? (
-                <div className={styles.widgetBody}>
+              {activeSubTab === "lambda-test" &&
+              creationMode === "Function" &&
+              !(authoringMode === "Wizard" && wizardTemplate === "LET") ? (
+                <>
                   {activeLambdaArgs.length > 0 ? (
                     <div className={styles.lambdaTestGrid}>
                       {activeLambdaArgs.map((arg, index) => (
@@ -1767,134 +1787,118 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
                       Run Lambda Test
                     </Button>
                   </div>
-                </div>
+                </>
               ) : null}
-            </div>
-          ) : null}
 
-          {authoringMode === "Editor" ? (
-            <div className={styles.widget}>
-              <button type="button" className={styles.widgetHeaderBtn} onClick={() => setEditorOpen((prev) => !prev)}>
-                <span>Formula Editor</span>
-                <span>{editorOpen ? "Collapse" : "Expand"}</span>
-              </button>
-              {editorOpen ? (
-                <div className={styles.widgetBody}>
-                  <div className={styles.editorShell}>
-                    <div className={styles.overlayTop}>
-                      <Button size="small" onClick={() => void runAction("Beautify formula", beautify)}>
-                        Beautify
+              {activeSubTab === "editor" && authoringMode === "Editor" ? (
+                <div className={styles.editorShell}>
+                  <div className={styles.overlayTop}>
+                    <Button size="small" onClick={() => void runAction("Beautify formula", beautify)}>
+                      Beautify
+                    </Button>
+                    <Button size="small" onClick={() => void runAction("Insert selection", insertSelection)}>
+                      Insert Selection
+                    </Button>
+                    <Button size="small" onClick={() => setIsEditorExpanded((prev) => !prev)}>
+                      {isEditorExpanded ? "Use Smaller Editor" : "Expand Editor"}
+                    </Button>
+                    {!isPopout ? (
+                      <Button
+                        size="small"
+                        onClick={() => void runAction("Open formula editor popout", openPopoutWithCurrentState)}
+                      >
+                        Open Pop-out
                       </Button>
-                      <Button size="small" onClick={() => void runAction("Insert selection", insertSelection)}>
-                        Insert Selection
+                    ) : null}
+                    {!isPopout ? (
+                      <Button size="small" onClick={onOpenLegacy}>
+                        Legacy View
                       </Button>
-                      <Button size="small" onClick={() => setIsEditorExpanded((prev) => !prev)}>
-                        {isEditorExpanded ? "Use Smaller Editor" : "Expand Editor"}
-                      </Button>
-                      {!isPopout ? (
-                        <Button
-                          size="small"
-                          onClick={() => void runAction("Open formula editor popout", openPopoutWithCurrentState)}
-                        >
-                          Open Pop-out
-                        </Button>
-                      ) : null}
-                      {!isPopout ? (
-                        <Button size="small" onClick={onOpenLegacy}>
-                          Legacy View
-                        </Button>
-                      ) : null}
-                    </div>
-
-                    <div className={styles.editorWrap}>
-                      {editorLoadError ? (
-                        <textarea
-                          aria-label="Formula editor fallback"
-                          className={styles.fallbackEditor}
-                          spellCheck={false}
-                          rows={10}
-                          style={{ height: editorHeight }}
-                          value={formulaText}
-                          onChange={(event) => setFormulaText(event.target.value)}
-                          onFocus={() => setEditorHasFocus(true)}
-                          onBlur={() => {
-                            setEditorHasFocus(false);
-                            void autoPullOnEditorBlur();
-                          }}
-                        />
-                      ) : editorReady ? (
-                        <Editor
-                          height={editorHeight}
-                          language={MONACO_LANGUAGE_ID}
-                          value={formulaText}
-                          beforeMount={beforeMount}
-                          onMount={onMount}
-                          theme="vs"
-                          options={{
-                            minimap: { enabled: false },
-                            scrollBeyondLastLine: false,
-                            fontSize: 13,
-                            lineHeight: editorLineHeight,
-                            lineNumbers: "on",
-                            wordWrap: "off",
-                            automaticLayout: true,
-                            suggestOnTriggerCharacters: true,
-                            quickSuggestions: { other: true, comments: false, strings: false },
-                            wordBasedSuggestions: "off",
-                            tabCompletion: "on",
-                            padding: {
-                              top: 38,
-                              bottom: 128,
-                            },
-                            suggest: {
-                              showWords: false,
-                              showSnippets: true,
-                              preview: true,
-                            },
-                          }}
-                        />
-                      ) : (
-                        <div className={styles.editorLoading} style={{ height: editorHeight }}>
-                          <Text className={shared.mutedText}>Loading formula editor...</Text>
-                        </div>
-                      )}
-                    </div>
-
-                    {!editorHasFocus ? (
-                      <div className={styles.actionDock}>
-                        <Text className={styles.overlayTitle}>Apply / Save</Text>
-                        <div className={styles.actionRow}>
-                          <Button
-                            appearance="primary"
-                            size="small"
-                            onClick={() => void runAction("Apply formula", applyToActiveCell)}
-                          >
-                            Apply Formula
-                          </Button>
-                          {creationMode === "Function" ? (
-                            <Button size="small" onClick={() => void saveCurrentAsNamedFunction()}>
-                              Save Function
-                            </Button>
-                          ) : (
-                            <Button size="small" onClick={() => setShowSaveFunctionModal(true)}>
-                              Save Named Function
-                            </Button>
-                          )}
-                        </div>
-                      </div>
                     ) : null}
                   </div>
+
+                  <div className={styles.editorWrap}>
+                    {editorLoadError ? (
+                      <textarea
+                        aria-label="Formula editor fallback"
+                        className={styles.fallbackEditor}
+                        spellCheck={false}
+                        rows={10}
+                        style={{ height: editorHeight }}
+                        value={formulaText}
+                        onChange={(event) => setFormulaText(event.target.value)}
+                        onFocus={() => setEditorHasFocus(true)}
+                        onBlur={() => {
+                          setEditorHasFocus(false);
+                          void autoPullOnEditorBlur();
+                        }}
+                      />
+                    ) : editorReady ? (
+                      <Editor
+                        height={editorHeight}
+                        language={MONACO_LANGUAGE_ID}
+                        value={formulaText}
+                        beforeMount={beforeMount}
+                        onMount={onMount}
+                        theme="vs"
+                        options={{
+                          minimap: { enabled: false },
+                          scrollBeyondLastLine: false,
+                          fontSize: 13,
+                          lineHeight: editorLineHeight,
+                          lineNumbers: "on",
+                          wordWrap: "off",
+                          automaticLayout: true,
+                          suggestOnTriggerCharacters: true,
+                          quickSuggestions: { other: true, comments: false, strings: false },
+                          wordBasedSuggestions: "off",
+                          tabCompletion: "on",
+                          padding: {
+                            top: 38,
+                            bottom: 128,
+                          },
+                          suggest: {
+                            showWords: false,
+                            showSnippets: true,
+                            preview: true,
+                          },
+                        }}
+                      />
+                    ) : (
+                      <div className={styles.editorLoading} style={{ height: editorHeight }}>
+                        <Text className={shared.mutedText}>Loading formula editor...</Text>
+                      </div>
+                    )}
+                  </div>
+
+                  {!editorHasFocus ? (
+                    <div className={styles.actionDock}>
+                      <Text className={styles.overlayTitle}>Apply / Save</Text>
+                      <div className={styles.actionRow}>
+                        <Button
+                          appearance="primary"
+                          size="small"
+                          onClick={() => void runAction("Apply formula", applyToActiveCell)}
+                        >
+                          Apply Formula
+                        </Button>
+                        {creationMode === "Function" ? (
+                          <Button size="small" onClick={() => void saveCurrentAsNamedFunction()}>
+                            Save Function
+                          </Button>
+                        ) : (
+                          <Button size="small" onClick={() => setShowSaveFunctionModal(true)}>
+                            Save Named Function
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
-            </div>
-          ) : (
-            <div className={styles.widget}>
-              <button type="button" className={styles.widgetHeaderBtn} onClick={() => setWizardOpen((prev) => !prev)}>
-                <span>Wizard Builder</span>
-                <span>{wizardOpen ? "Collapse" : "Expand"}</span>
-              </button>
-              {wizardOpen ? (
-                <div className={styles.widgetBody}>
+
+              {activeSubTab === "wizard" && authoringMode === "Wizard" ? (
+                <>
                   <div className={styles.modeRow}>
                     <Text className={shared.mutedText}>Wizard type:</Text>
                     <Select
@@ -1963,60 +1967,54 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
                     </Button>
                     <Button onClick={() => setAuthoringMode("Editor")}>Switch To Editor</Button>
                   </div>
-                </div>
+                </>
+              ) : null}
+
+              {activeSubTab === "live-output" ? (
+                <>
+                  <div className={styles.liveTestHeader}>
+                    <Text className={shared.cardTitle}>Live Test Output</Text>
+                    <Text className={shared.mutedText}>
+                      {liveTestBusy
+                        ? "Testing..."
+                        : liveTestError
+                          ? `Last test failed${lastTestedAt ? ` at ${lastTestedAt}` : ""}`
+                          : lastTestedAt
+                            ? `Auto-tested at ${lastTestedAt}`
+                            : "Waiting for formula input"}
+                    </Text>
+                  </div>
+
+                  {lastTestInvocation ? (
+                    <Text className={styles.invocationText}>Invocation: {lastTestInvocation}</Text>
+                  ) : null}
+                  {liveTestError ? <Text className={shared.errorText}>{liveTestError}</Text> : null}
+
+                  <div className={styles.outputWrap}>
+                    {formulaOutput ? (
+                      <table className={styles.outputTable}>
+                        <tbody>
+                          {formulaOutput.values.map((row, rowIndex) => (
+                            <tr key={rowIndex}>
+                              {row.map((cell, colIndex) => (
+                                <td key={`${rowIndex}-${colIndex}`} className={styles.outputCell}>
+                                  {cell === null ? "" : String(cell)}
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    ) : (
+                      <div className={styles.outputCell}>
+                        <Text className={shared.mutedText}>Live test will render results here as you edit.</Text>
+                      </div>
+                    )}
+                  </div>
+                </>
               ) : null}
             </div>
-          )}
-
-          <div className={styles.widget}>
-            <button type="button" className={styles.widgetHeaderBtn} onClick={() => setLiveTestOpen((prev) => !prev)}>
-              <span>Live Test Output</span>
-              <span>{liveTestOpen ? "Collapse" : "Expand"}</span>
-            </button>
-            {liveTestOpen ? (
-              <div className={styles.widgetBody}>
-                <div className={styles.liveTestHeader}>
-                  <Text className={shared.cardTitle}>Live Test Output</Text>
-                  <Text className={shared.mutedText}>
-                    {liveTestBusy
-                      ? "Testing..."
-                      : liveTestError
-                        ? `Last test failed${lastTestedAt ? ` at ${lastTestedAt}` : ""}`
-                        : lastTestedAt
-                          ? `Auto-tested at ${lastTestedAt}`
-                          : "Waiting for formula input"}
-                  </Text>
-                </div>
-
-                {lastTestInvocation ? (
-                  <Text className={styles.invocationText}>Invocation: {lastTestInvocation}</Text>
-                ) : null}
-                {liveTestError ? <Text className={shared.errorText}>{liveTestError}</Text> : null}
-
-                <div className={styles.outputWrap}>
-                  {formulaOutput ? (
-                    <table className={styles.outputTable}>
-                      <tbody>
-                        {formulaOutput.values.map((row, rowIndex) => (
-                          <tr key={rowIndex}>
-                            {row.map((cell, colIndex) => (
-                              <td key={`${rowIndex}-${colIndex}`} className={styles.outputCell}>
-                                {cell === null ? "" : String(cell)}
-                              </td>
-                            ))}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  ) : (
-                    <div className={styles.outputCell}>
-                      <Text className={shared.mutedText}>Live test will render results here as you edit.</Text>
-                    </div>
-                  )}
-                </div>
-              </div>
-            ) : null}
-          </div>
+          ) : null}
 
           {status ? <Text className={statusClass}>{status}</Text> : null}
         </div>

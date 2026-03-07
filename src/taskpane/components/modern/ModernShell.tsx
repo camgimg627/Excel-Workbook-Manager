@@ -6,11 +6,13 @@ import {
   Box20Regular,
   DataArea20Regular,
   DataPie20Regular,
+  Filter20Regular,
   Grid20Regular,
   MoreHorizontal20Regular,
   QuestionCircle20Regular,
   Settings20Regular,
   Table20Regular,
+  TextAlignJustify20Regular,
 } from "@fluentui/react-icons";
 import { NavigationTarget } from "../../navigation";
 import FormulaMonacoView, { FormulaViewHandle } from "./FormulaMonacoView";
@@ -156,8 +158,8 @@ const ModernShell: React.FC<ModernShellProps> = ({
       { id: "names", label: "Names", icon: <BookNumber20Regular />, enabled: true },
       { id: "tables", label: "Tables", icon: <Table20Regular />, enabled: true },
       { id: "formulas", label: "Formulas", icon: <DataArea20Regular />, enabled: true },
-      { id: "queries", label: "Queries", icon: <DataArea20Regular />, enabled: true },
-      { id: "model-builder", label: "Model Builder", icon: <Grid20Regular />, enabled: true },
+      { id: "queries", label: "Queries", icon: <Filter20Regular />, enabled: true },
+      { id: "model-builder", label: "Model Builder", icon: <TextAlignJustify20Regular />, enabled: true },
       { id: "pivots", label: "Pivots", icon: <DataPie20Regular />, enabled: true },
       { id: "format", label: "Format", icon: <Grid20Regular />, enabled: true },
       { id: "sandbox-debug", label: "Sandbox", icon: <Box20Regular />, enabled: true },
