@@ -141,12 +141,19 @@ interface EyeDropperLike {
 const parseCellDestination = (value: string): string | null => {
   const trimmed = value.trim();
   const match = trimmed.match(
-    /^'?([^'!]+)'?!([A-Za-z]{1,3}\d+(?::[A-Za-z]{1,3}\d+)?|[A-Za-z]{1,3}:[A-Za-z]{1,3}|\d+:\d+)$/i
+    /^(?:'((?:[^']|'')+)'|([^'!]+))!([A-Za-z]{1,3}\d+(?::[A-Za-z]{1,3}\d+)?|[A-Za-z]{1,3}:[A-Za-z]{1,3}|\d+:\d+)$/i
   );
   if (!match) {
     return null;
   }
-  return `cell::${match[1].trim()}::${match[2].toUpperCase()}`;
+  const quotedSheetName = match[1]?.replace(/''/g, "'");
+  const unquotedSheetName = match[2];
+  const sheetName = (quotedSheetName ?? unquotedSheetName ?? "").trim();
+  const address = (match[3] ?? "").toUpperCase();
+  if (!sheetName || !address) {
+    return null;
+  }
+  return `cell::${sheetName}::${address}`;
 };
 
 const compareShapesBySelectionPanePosition = (left: ShapeBuilderShapeRecord, right: ShapeBuilderShapeRecord): number =>
@@ -549,6 +556,7 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
   const [statusType, setStatusType] = useState<"ok" | "error">("ok");
   const [styleBaseline, setStyleBaseline] = useState<StyleBaseline | null>(null);
   const shapeHandlersRef = useRef<Array<{ remove: () => Promise<void> | void }>>([]);
+  const selectedShapeIdRef = useRef("");
   const editorCardRef = useRef<HTMLDivElement | null>(null);
   const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
   const styleBaselineShapeIdRef = useRef<string>("");
@@ -607,6 +615,7 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
     });
   }, [shapes, shapeFilterQuery, shapeLinkFilter]);
   const isShapeListFiltered = shapeFilterQuery.trim().length > 0 || shapeLinkFilter !== "all";
+  selectedShapeIdRef.current = selectedShapeId;
 
   const setOk = (message: string) => {
     setStatusType("ok");
@@ -786,10 +795,13 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
       if (!selectedShape) {
         return;
       }
+      const targetShapeId = selectedShape.id;
       try {
         const updated = await updateShapeBuilderShape(selectedShape.sheetName, selectedShape.shapeName, patch);
-        setShapes((prev) => sortShapesBySelectionPanePosition(prev.map((x) => (x.id === selectedShape.id ? updated : x))));
-        setDraft(updated);
+        setShapes((prev) => sortShapesBySelectionPanePosition(prev.map((x) => (x.id === targetShapeId ? updated : x))));
+        if (selectedShapeIdRef.current === targetShapeId) {
+          setDraft((prev) => (prev && prev.id === targetShapeId ? updated : prev));
+        }
       } catch (error) {
         setErr(error);
       }
@@ -802,6 +814,7 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
       if (!draft) {
         return;
       }
+      const targetShapeId = draft.id;
       const textArea = textAreaRef.current;
       const selectionStart = textArea ? Math.min(textArea.selectionStart, textArea.selectionEnd) : 0;
       const selectionEnd = textArea ? Math.max(textArea.selectionStart, textArea.selectionEnd) : 0;
@@ -822,7 +835,9 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
         setShapes((prev) =>
           sortShapesBySelectionPanePosition(prev.map((item) => (item.id === updated.id ? updated : item)))
         );
-        setDraft(updated);
+        if (selectedShapeIdRef.current === targetShapeId) {
+          setDraft((prev) => (prev && prev.id === targetShapeId ? updated : prev));
+        }
         window.setTimeout(() => {
           const editor = textAreaRef.current;
           if (!editor) {
@@ -986,9 +1001,11 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
     }
     try {
       await deleteShapeBuilderShape(shape.sheetName, shape.shapeName);
-      const next = sortShapesBySelectionPanePosition(shapes.filter((x) => x.id !== shape.id));
-      setShapes(next);
-      setSelectedShapeId((prev) => (prev === shape.id ? next[0]?.id ?? "" : prev));
+      setShapes((prev) => {
+        const next = sortShapesBySelectionPanePosition(prev.filter((x) => x.id !== shape.id));
+        setSelectedShapeId((current) => (current === shape.id ? next[0]?.id ?? "" : current));
+        return next;
+      });
       setOk("Shape deleted.");
     } catch (error) {
       setErr(error);
@@ -1879,7 +1896,26 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
                     <div className={s.horizontal}>
                       <input className={s.input} value={cellRefInput} onChange={(event) => setCellRefInput(event.target.value)} />
                       <button className={s.smallBtn} type="button" onClick={() => { const id = parseCellDestination(cellRefInput); if (!id) { setErr("Invalid cell reference."); return; } setDraft({ ...draft, internalDestinationId: id }); void patchShape({ linkType: "Internal", internalDestinationId: id, externalUrl: "" }); setOk("Cell reference linked."); }}>Use Cell</button>
-                      <button className={s.smallBtn} type="button" onClick={() => void activateNavigationDestination(draft.internalDestinationId)}>Test</button>
+                      <button
+                        className={s.smallBtn}
+                        type="button"
+                        onClick={() =>
+                          void (async () => {
+                            const destinationId = draft.internalDestinationId.trim();
+                            if (!destinationId) {
+                              setErr("Select an internal destination first.");
+                              return;
+                            }
+                            try {
+                              await activateNavigationDestination(destinationId);
+                            } catch (error) {
+                              setErr(error);
+                            }
+                          })()
+                        }
+                      >
+                        Test
+                      </button>
                     </div>
                   </>
                 ) : null}
@@ -1887,7 +1923,26 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
                   <>
                     <Text className={s.label}>External URL</Text>
                     <input className={s.input} value={draft.externalUrl} onChange={(event) => setDraft({ ...draft, externalUrl: event.target.value })} onBlur={() => void patchShape({ linkType: "External", externalUrl: draft.externalUrl, internalDestinationId: "" })} />
-                    <button className={s.smallBtn} type="button" onClick={() => void activateNavigationDestination(`url::${draft.externalUrl.trim()}`)}>Open URL</button>
+                    <button
+                      className={s.smallBtn}
+                      type="button"
+                      onClick={() =>
+                        void (async () => {
+                          const url = draft.externalUrl.trim();
+                          if (!url) {
+                            setErr("Enter an external URL first.");
+                            return;
+                          }
+                          try {
+                            await activateNavigationDestination(`url::${url}`);
+                          } catch (error) {
+                            setErr(error);
+                          }
+                        })()
+                      }
+                    >
+                      Open URL
+                    </button>
                   </>
                 ) : null}
               </div>
