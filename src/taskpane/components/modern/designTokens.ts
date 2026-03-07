@@ -46,11 +46,13 @@ export const useModernSharedStyles = makeStyles({
     marginBottom: "16px",
   },
   sectionTitle: {
+    display: "block",
     fontSize: "20px",
     fontWeight: 700,
     marginBottom: "4px",
   },
   sectionSubtitle: {
+    display: "block",
     fontSize: "13px",
     color: MODERN_TOKENS.colorTextMuted,
     marginBottom: "24px",

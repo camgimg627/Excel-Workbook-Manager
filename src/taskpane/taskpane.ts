@@ -15,6 +15,9 @@ export interface NamedRangeRecord {
     | "Single Row Array"
     | "Multi-column Array"
     | "Multi-Row Array"
+    | "Function"
+    | "List"
+    | "Formula"
     | "Shape";
 }
 
@@ -309,6 +312,27 @@ interface FormulaDialogEvalResponseMessage {
   error?: string;
 }
 
+interface FormulaDialogReadyMessage {
+  channel: typeof FORMULA_DIALOG_RPC_CHANNEL;
+  type: "ready";
+}
+
+interface FormulaDialogOpenFormulaMessage {
+  channel: typeof FORMULA_DIALOG_RPC_CHANNEL;
+  type: "open-formula";
+  formula: string;
+  name?: string;
+  entryType?: "Formula" | "Function" | "List";
+  functionArgs?: string;
+  description?: string;
+  creationMode?: "Formula" | "Function";
+  authoringMode?: "Editor" | "Wizard";
+  wizardTemplate?: "LAMBDA" | "LET";
+  wizardArgs?: string;
+  wizardReturnExpression?: string;
+  wizardVariables?: Array<{ name: string; expression: string }>;
+}
+
 async function runFormattingCommand(command: (context: Excel.RequestContext) => Promise<void>) {
   await Excel.run(async (context) => {
     await command(context);
@@ -354,12 +378,42 @@ function classifyRangeShape(rowCount: number, columnCount: number): NamedRangeRe
   return rowCount >= columnCount ? "Multi-Row Array" : "Multi-column Array";
 }
 
+function isLambdaFormula(formula: string): boolean {
+  return /^LAMBDA\s*\(/i.test(formula.trim());
+}
+
+function isArrayConstantFormula(formula: string): boolean {
+  const trimmed = formula.trim();
+  return trimmed.startsWith("{") && trimmed.endsWith("}");
+}
+
+function classifyNamedItemType(formula: string, isRange: boolean): NamedRangeRecord["type"] {
+  if (isRange) {
+    return "Single Cell";
+  }
+  if (isLambdaFormula(formula)) {
+    return "Function";
+  }
+  if (isArrayConstantFormula(formula)) {
+    return "List";
+  }
+  return "Formula";
+}
+
 function normalizeDisplayAddress(formula: string): string {
   const trimmed = formula.replace(/^=/, "").trim();
   if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
     return trimmed.slice(1, -1).replace(/""/g, '"').trim();
   }
   return trimmed;
+}
+
+function normalizeFormulaExpression(formulaInput: string): string {
+  const trimmed = formulaInput.trim();
+  if (!trimmed) {
+    return "";
+  }
+  return trimmed.startsWith("=") ? trimmed : `=${trimmed}`;
 }
 
 function toQualifiedAddress(sheet: string, address: string): string {
@@ -2461,31 +2515,26 @@ export async function getNamedRanges(): Promise<NamedRangeRecord[]> {
       if (namedItem.name.toLowerCase().startsWith("_xl")) {
         continue;
       }
-      if (
-        namedItem.name.includes("(") ||
-        normalizeDisplayAddress(namedItem.formula).includes("(")
-      ) {
-        continue;
-      }
+      const normalizedFormula = normalizeDisplayAddress(namedItem.formula);
       const parsed = splitQualifiedAddress(namedItem.formula);
       const isRange =
         parsed.sheet.length > 0 &&
         parsed.address.length > 0 &&
         isCellAddressExpression(parsed.address);
-      const resolvedSheet = parsed.sheet || "N/A";
+      const resolvedSheet = parsed.sheet || (isRange ? "N/A" : "Workbook");
       records.push({
         id: `workbook::${namedItem.name}`,
         kind: "NamedRange",
         name: namedItem.name,
         address:
-          parsed.sheet && parsed.address
+          isRange && parsed.sheet && parsed.address
             ? toQualifiedAddress(parsed.sheet, parsed.address)
-            : parsed.address || normalizeDisplayAddress(namedItem.formula),
+            : normalizedFormula,
         sheet: resolvedSheet,
         scope: "Workbook",
         scopeType: "Workbook",
         isRange,
-        type: "Single Cell",
+        type: classifyNamedItemType(normalizedFormula, isRange),
       });
 
       if (isRange && parsed.sheet && parsed.address) {
@@ -2509,12 +2558,7 @@ export async function getNamedRanges(): Promise<NamedRangeRecord[]> {
         if (namedItem.name.toLowerCase().startsWith("_xl")) {
           continue;
         }
-        if (
-          namedItem.name.includes("(") ||
-          normalizeDisplayAddress(namedItem.formula).includes("(")
-        ) {
-          continue;
-        }
+        const normalizedFormula = normalizeDisplayAddress(namedItem.formula);
         const parsed = splitQualifiedAddress(namedItem.formula);
         const isRange = parsed.address.length > 0 && isCellAddressExpression(parsed.address);
         const resolvedSheet = parsed.sheet || map.sheetName;
@@ -2523,14 +2567,14 @@ export async function getNamedRanges(): Promise<NamedRangeRecord[]> {
           kind: "NamedRange",
           name: namedItem.name,
           address:
-            resolvedSheet && parsed.address
+            isRange && resolvedSheet && parsed.address
               ? toQualifiedAddress(resolvedSheet, parsed.address)
-              : parsed.address || normalizeDisplayAddress(namedItem.formula),
+              : normalizedFormula,
           sheet: resolvedSheet,
           scope: map.sheetName,
           scopeType: "Worksheet",
           isRange,
-          type: "Single Cell",
+          type: classifyNamedItemType(normalizedFormula, isRange),
         });
 
         if (isRange && parsed.address) {
@@ -2607,7 +2651,8 @@ export async function addNamedRange(
   scope: string,
   name: string,
   address: string,
-  fallbackSheet: string
+  fallbackSheet: string,
+  referenceType: "Reference" | "Formula" = "Reference"
 ) {
   await Excel.run(async (context) => {
     const collection =
@@ -2615,7 +2660,12 @@ export async function addNamedRange(
         ? context.workbook.names
         : context.workbook.worksheets.getItem(scope).names;
 
-    collection.add(name, normalizeReference(address, fallbackSheet));
+    collection.add(
+      name,
+      referenceType === "Formula"
+        ? normalizeFormulaExpression(address)
+        : normalizeReference(address, fallbackSheet)
+    );
     await context.sync();
   });
 }
@@ -3287,7 +3337,21 @@ export async function openFormatEditorPopout(): Promise<void> {
   });
 }
 
-export async function openFormulaEditorPopout(): Promise<void> {
+export async function openFormulaEditorPopout(
+  initialState?: {
+    formula: string;
+    name?: string;
+    entryType?: "Formula" | "Function" | "List";
+    functionArgs?: string;
+    description?: string;
+    creationMode?: "Formula" | "Function";
+    authoringMode?: "Editor" | "Wizard";
+    wizardTemplate?: "LAMBDA" | "LET";
+    wizardArgs?: string;
+    wizardReturnExpression?: string;
+    wizardVariables?: Array<{ name: string; expression: string }>;
+  }
+): Promise<void> {
   const url = `${window.location.origin}/taskpane.html?popout=formula`;
   if (formulaEditorDialog) {
     try {
@@ -3309,6 +3373,35 @@ export async function openFormulaEditorPopout(): Promise<void> {
         }
         const dialog = result.value;
         formulaEditorDialog = dialog;
+        let pendingOpenMessage: FormulaDialogOpenFormulaMessage | null =
+          initialState && initialState.formula.trim()
+            ? {
+                channel: FORMULA_DIALOG_RPC_CHANNEL,
+                type: "open-formula",
+              formula: initialState.formula.trim(),
+              name: initialState.name?.trim() || undefined,
+              entryType: initialState.entryType,
+              functionArgs: initialState.functionArgs,
+              description: initialState.description,
+              creationMode: initialState.creationMode,
+              authoringMode: initialState.authoringMode,
+              wizardTemplate: initialState.wizardTemplate,
+              wizardArgs: initialState.wizardArgs,
+              wizardReturnExpression: initialState.wizardReturnExpression,
+              wizardVariables: initialState.wizardVariables,
+            }
+            : null;
+        const dispatchOpenMessage = () => {
+          if (!pendingOpenMessage) {
+            return;
+          }
+          try {
+            dialog.messageChild(JSON.stringify(pendingOpenMessage));
+            pendingOpenMessage = null;
+          } catch {
+            // Dialog may not be ready to receive yet.
+          }
+        };
         dialog.addEventHandler(Office.EventType.DialogEventReceived, () => {
           if (formulaEditorDialog === dialog) {
             formulaEditorDialog = null;
@@ -3331,9 +3424,15 @@ export async function openFormulaEditorPopout(): Promise<void> {
               return;
             }
 
-            const data = payload as Partial<FormulaDialogEvalRequestMessage>;
+            const data = payload as Partial<FormulaDialogEvalRequestMessage | FormulaDialogReadyMessage>;
+            if (data.channel !== FORMULA_DIALOG_RPC_CHANNEL || typeof data.type !== "string") {
+              return;
+            }
+            if (data.type === "ready") {
+              dispatchOpenMessage();
+              return;
+            }
             if (
-              data.channel !== FORMULA_DIALOG_RPC_CHANNEL ||
               data.type !== "eval-request" ||
               typeof data.requestId !== "string" ||
               typeof data.formula !== "string"
@@ -3373,6 +3472,8 @@ export async function openFormulaEditorPopout(): Promise<void> {
             })();
           }
         );
+        window.setTimeout(dispatchOpenMessage, 450);
+        window.setTimeout(dispatchOpenMessage, 1100);
         resolve();
       }
     );

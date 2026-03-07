@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, Input, Select, Text, makeStyles } from "@fluentui/react-components";
 import {
   NamedRangeRecord,
@@ -8,6 +8,7 @@ import {
   getCurrentSelectionAddress,
   getNamedRanges,
   moveNamedRange,
+  openFormulaEditorPopout,
   selectNamedRangeAddress,
   updateNamedRange,
 } from "../../taskpane";
@@ -17,6 +18,7 @@ type SortColumn = "name" | "address" | "sheet" | "scope" | "type";
 type SortDirection = "asc" | "desc";
 type ScopeType = "Workbook" | "Worksheet";
 type CaseTransform = "none" | "camelCase" | "snake_case" | "SCREAMING_SNAKE_CASE";
+type CreateEntryType = "Range" | "Function" | "List";
 
 interface NamesViewProps {
   createRequestId: number;
@@ -34,10 +36,14 @@ interface EditState {
 
 interface CreateState {
   open: boolean;
+  createType: CreateEntryType;
   scopeType: ScopeType;
   scope: string;
   name: string;
   address: string;
+  lambdaArgs: string;
+  functionBody: string;
+  listValues: string;
   fallbackSheet: string;
 }
 
@@ -66,6 +72,8 @@ interface BulkState {
 }
 
 const RANGE_COLUMNS: SortColumn[] = ["name", "address", "sheet", "scope", "type"];
+const ADDRESS_COLUMN_MIN_WIDTH = 220;
+const ADDRESS_COLUMN_MAX_WIDTH = 960;
 
 const useStyles = makeStyles({
   root: { display: "grid", gap: "24px" },
@@ -77,7 +85,14 @@ const useStyles = makeStyles({
     backgroundColor: "#fff",
     overflow: "auto",
   },
-  table: { width: "100%", borderCollapse: "separate", borderSpacing: 0, minWidth: "980px", fontSize: "12px" },
+  table: {
+    width: "100%",
+    borderCollapse: "separate",
+    borderSpacing: 0,
+    minWidth: "1120px",
+    tableLayout: "fixed",
+    fontSize: "12px",
+  },
   headCell: {
     position: "sticky",
     top: 0,
@@ -111,6 +126,75 @@ const useStyles = makeStyles({
     textDecorationLine: "underline",
     padding: 0,
   },
+  cellEllipsis: {
+    display: "block",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    minWidth: 0,
+  },
+  typeFilterWrap: { position: "relative" },
+  typeFilterSummary: {
+    listStyleType: "none",
+    border: `1px solid ${MODERN_TOKENS.colorBorder}`,
+    borderRadius: "6px",
+    height: "32px",
+    display: "inline-flex",
+    alignItems: "center",
+    padding: "0 10px",
+    cursor: "pointer",
+    userSelect: "none",
+    backgroundColor: "#fff",
+    selectors: {
+      "&::-webkit-details-marker": { display: "none" },
+      "&::marker": { content: '""' },
+    },
+  },
+  typeFilterMenu: {
+    position: "absolute",
+    top: "calc(100% + 4px)",
+    right: 0,
+    zIndex: 6,
+    minWidth: "220px",
+    borderRadius: "6px",
+    border: `1px solid ${MODERN_TOKENS.colorBorder}`,
+    backgroundColor: "#fff",
+    boxShadow: MODERN_TOKENS.shadowCardHover,
+    padding: "8px",
+    display: "grid",
+    gap: "6px",
+  },
+  typeFilterRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    color: MODERN_TOKENS.colorText,
+    fontSize: "12px",
+    whiteSpace: "nowrap",
+  },
+  typeFilterDivider: {
+    borderTop: `1px solid ${MODERN_TOKENS.colorBorder}`,
+    margin: "2px 0",
+  },
+  addressHeadCell: {
+    position: "sticky",
+    top: 0,
+    paddingRight: "14px",
+  },
+  columnResizeHandle: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    width: "9px",
+    height: "100%",
+    cursor: "col-resize",
+    userSelect: "none",
+    touchAction: "none",
+    backgroundColor: "transparent",
+    selectors: {
+      "&:hover": { backgroundColor: "#D1D5DB" },
+    },
+  },
   modalBackdrop: {
     position: "fixed",
     inset: 0,
@@ -136,6 +220,27 @@ const useStyles = makeStyles({
   modalGrid: { display: "grid", gap: "12px", gridTemplateColumns: "repeat(2, minmax(0, 1fr))" },
   full: { gridColumn: "1 / -1" },
   modalActions: { display: "flex", justifyContent: "flex-end", gap: "8px", flexWrap: "wrap" },
+  multilineInput: {
+    width: "100%",
+    minHeight: "120px",
+    borderRadius: "6px",
+    border: `1px solid ${MODERN_TOKENS.colorBorder}`,
+    padding: "10px",
+    fontFamily: "Consolas, 'Courier New', monospace",
+    fontSize: "12px",
+    lineHeight: "1.4",
+    boxSizing: "border-box",
+    resize: "vertical",
+  },
+  chipRow: { display: "flex", flexWrap: "wrap", gap: "6px" },
+  chip: {
+    border: `1px solid ${MODERN_TOKENS.colorBorder}`,
+    borderRadius: "999px",
+    padding: "2px 8px",
+    fontSize: "11px",
+    color: MODERN_TOKENS.colorTextMuted,
+    backgroundColor: "#F9FAFB",
+  },
 });
 
 const applyCase = (value: string, mode: CaseTransform): string => {
@@ -159,6 +264,64 @@ const applyCase = (value: string, mode: CaseTransform): string => {
 };
 
 const err = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+const IDENTIFIER_PATTERN = /^[A-Za-z_\\][A-Za-z0-9_.\\]*$/;
+
+const parseFunctionArgs = (value: string): string[] =>
+  value
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+
+const buildLambdaFormula = (bodyInput: string, argsInput: string): string => {
+  const normalizedBody = bodyInput.trim();
+  if (!normalizedBody) {
+    throw new Error("Function definition is required.");
+  }
+
+  const bodyWithoutEquals = normalizedBody.replace(/^=/, "").trim();
+  if (/^LAMBDA\s*\(/i.test(bodyWithoutEquals)) {
+    return `=${bodyWithoutEquals}`;
+  }
+
+  const args = parseFunctionArgs(argsInput);
+  const seen = new Set<string>();
+  args.forEach((arg) => {
+    if (!IDENTIFIER_PATTERN.test(arg)) {
+      throw new Error(`Invalid function argument "${arg}".`);
+    }
+    const key = arg.toUpperCase();
+    if (seen.has(key)) {
+      throw new Error(`Duplicate function argument "${arg}".`);
+    }
+    seen.add(key);
+  });
+
+  return args.length > 0
+    ? `=LAMBDA(${args.join(",")},${bodyWithoutEquals})`
+    : `=LAMBDA(${bodyWithoutEquals})`;
+};
+
+const buildNamedListFormula = (listInput: string): string => {
+  const values = listInput
+    .split(/[\r\n,;]+/)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+  if (values.length === 0) {
+    throw new Error("List values are required.");
+  }
+
+  const literals = values.map((value) => {
+    if (/^-?\d+(\.\d+)?$/.test(value)) {
+      return value;
+    }
+    if (/^(TRUE|FALSE)$/i.test(value)) {
+      return value.toUpperCase();
+    }
+    return `"${value.replace(/"/g, '""')}"`;
+  });
+
+  return `={${literals.join(";")}}`;
+};
 
 const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy }) => {
   const shared = useModernSharedStyles();
@@ -173,6 +336,10 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy }) 
   const [sortColumn, setSortColumn] = useState<SortColumn>("name");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [typeFilters, setTypeFilters] = useState<Set<string>>(new Set());
+  const [addressColumnWidth, setAddressColumnWidth] = useState<number>(320);
+  const [resizingAddressColumn, setResizingAddressColumn] = useState<boolean>(false);
+  const addressResizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
   const [editState, setEditState] = useState<EditState>({
     open: false,
@@ -184,10 +351,14 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy }) 
   });
   const [createState, setCreateState] = useState<CreateState>({
     open: false,
+    createType: "Range",
     scopeType: "Workbook",
     scope: "",
     name: "",
     address: "",
+    lambdaArgs: "",
+    functionBody: "",
+    listValues: "",
     fallbackSheet: "",
   });
   const [moveState, setMoveState] = useState<MoveState>({
@@ -238,10 +409,40 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy }) 
     }
   }, [createRequestId]);
 
+  useEffect(() => {
+    if (!resizingAddressColumn) {
+      return undefined;
+    }
+    const handleMouseMove = (event: MouseEvent) => {
+      const resizeState = addressResizeRef.current;
+      if (!resizeState) {
+        return;
+      }
+      const delta = event.clientX - resizeState.startX;
+      setAddressColumnWidth(
+        Math.max(
+          ADDRESS_COLUMN_MIN_WIDTH,
+          Math.min(ADDRESS_COLUMN_MAX_WIDTH, resizeState.startWidth + delta)
+        )
+      );
+    };
+    const handleMouseUp = () => {
+      setResizingAddressColumn(false);
+      addressResizeRef.current = null;
+    };
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [resizingAddressColumn]);
+
   const visibleRows = useMemo(() => {
     const token = search.trim().toLowerCase();
     return rows
       .filter((row) => (scopeFilter === "all" ? true : row.scopeType === scopeFilter))
+      .filter((row) => (typeFilters.size === 0 ? true : typeFilters.has(row.type)))
       .filter((row) =>
         token
           ? `${row.name} ${row.address} ${row.sheet} ${row.scope} ${row.type}`
@@ -253,11 +454,25 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy }) 
         const compare = a[sortColumn].localeCompare(b[sortColumn], undefined, { sensitivity: "base" });
         return sortDirection === "asc" ? compare : -compare;
       });
-  }, [rows, scopeFilter, search, sortColumn, sortDirection]);
+  }, [rows, scopeFilter, typeFilters, search, sortColumn, sortDirection]);
 
-  const selectableRows = useMemo(() => visibleRows.filter((row) => row.kind === "NamedRange"), [visibleRows]);
+  const availableTypes = useMemo(
+    () => Array.from(new Set(rows.map((row) => row.type))).sort((a, b) => a.localeCompare(b)),
+    [rows]
+  );
+  const typeFilterLabel =
+    typeFilters.size === 0 ? "All Types" : `Types (${typeFilters.size.toString()})`;
+
+  const selectableRows = useMemo(
+    () => visibleRows.filter((row) => row.kind === "NamedRange" && row.isRange),
+    [visibleRows]
+  );
   const allSelected =
     selectableRows.length > 0 && selectableRows.every((row) => selectedIds.has(row.id));
+  const createFunctionArgsPreview = useMemo(
+    () => parseFunctionArgs(createState.lambdaArgs),
+    [createState.lambdaArgs]
+  );
 
   const bulkPreview = useMemo(() => {
     const selected = rows.filter((row) => row.kind === "NamedRange" && selectedIds.has(row.id));
@@ -281,6 +496,28 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy }) 
     }
     setSortColumn(column);
     setSortDirection("asc");
+  };
+
+  const toggleTypeFilter = (type: string) => {
+    setTypeFilters((prev) => {
+      const next = new Set(prev);
+      if (next.has(type)) {
+        next.delete(type);
+      } else {
+        next.add(type);
+      }
+      return next;
+    });
+  };
+
+  const startAddressResize = (event: React.MouseEvent<HTMLSpanElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    addressResizeRef.current = {
+      startX: event.clientX,
+      startWidth: addressColumnWidth,
+    };
+    setResizingAddressColumn(true);
   };
 
   const captureSelection = async (
@@ -314,22 +551,75 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy }) 
 
   const submitCreate = async () => {
     const name = createState.name.trim();
-    const address = createState.address.trim();
-    if (!name || !address) {
+    if (!name) {
       setStatusType("error");
-      setStatus("Name and address are required.");
+      setStatus("Name is required.");
       return;
     }
+    if (createState.scopeType === "Worksheet" && !createState.scope.trim() && !createState.fallbackSheet.trim()) {
+      setStatusType("error");
+      setStatus("Worksheet scope is required for worksheet-level names.");
+      return;
+    }
+
+    let definition = createState.address.trim();
+    let referenceType: "Reference" | "Formula" = "Reference";
+
+    if (createState.createType === "Range") {
+      if (!definition) {
+        setStatusType("error");
+        setStatus("Address is required for range names.");
+        return;
+      }
+    }
+
+    if (createState.createType === "Function") {
+      try {
+        definition = buildLambdaFormula(createState.functionBody, createState.lambdaArgs);
+        referenceType = "Formula";
+      } catch (error) {
+        setStatusType("error");
+        setStatus(err(error));
+        return;
+      }
+    }
+
+    if (createState.createType === "List") {
+      try {
+        definition = buildNamedListFormula(createState.listValues);
+        referenceType = "Formula";
+      } catch (error) {
+        setStatusType("error");
+        setStatus(err(error));
+        return;
+      }
+    }
+
     await runSubmit(
       async () => {
         const scope =
           createState.scopeType === "Worksheet"
             ? createState.scope.trim() || createState.fallbackSheet
             : createState.scope.trim();
-        await addNamedRange(createState.scopeType, scope, name, address, createState.fallbackSheet);
-        setCreateState((prev) => ({ ...prev, open: false, name: "", address: "" }));
+        await addNamedRange(
+          createState.scopeType,
+          scope,
+          name,
+          definition,
+          createState.fallbackSheet,
+          referenceType
+        );
+        setCreateState((prev) => ({
+          ...prev,
+          open: false,
+          name: "",
+          address: "",
+          lambdaArgs: "",
+          functionBody: "",
+          listValues: "",
+        }));
       },
-      "Named range created.",
+      `${createState.createType} name created.`,
       "Create failed"
     );
   };
@@ -447,13 +737,41 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy }) 
     );
   };
 
+  const openNameLink = async (row: NamedRangeRecord) => {
+    if (row.kind !== "NamedRange") {
+      return;
+    }
+    if (row.isRange) {
+      try {
+        await selectNamedRangeAddress(row.address, row.sheet);
+      } catch (error) {
+        setStatusType("error");
+        setStatus(`Unable to navigate to "${row.name}": ${err(error)}`);
+      }
+      return;
+    }
+    const normalizedFormula = row.address.trim().startsWith("=") ? row.address.trim() : `=${row.address.trim()}`;
+    try {
+      await openFormulaEditorPopout({
+        formula: normalizedFormula,
+        name: row.name,
+        entryType: row.type === "Function" ? "Function" : row.type === "List" ? "List" : "Formula",
+      });
+      setStatusType("success");
+      setStatus(`Opened formula editor pop-out for "${row.name}".`);
+    } catch (error) {
+      setStatusType("error");
+      setStatus(`Unable to open formula editor for "${row.name}": ${err(error)}`);
+    }
+  };
+
   const statusClass = statusType === "success" ? shared.successText : shared.errorText;
 
   return (
     <div className={styles.root}>
       <div>
         <Text className={shared.sectionTitle}>Names</Text>
-        <Text className={shared.sectionSubtitle}>Manage named ranges and workbook objects.</Text>
+        <Text className={shared.sectionSubtitle}>Manage named ranges, lists, functions, and workbook objects.</Text>
       </div>
 
       <div className={shared.card}>
@@ -474,6 +792,30 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy }) 
             <option value="Workbook">Workbook</option>
             <option value="Worksheet">Worksheet</option>
           </Select>
+          <details className={styles.typeFilterWrap}>
+            <summary className={styles.typeFilterSummary}>{typeFilterLabel}</summary>
+            <div className={styles.typeFilterMenu}>
+              <label className={styles.typeFilterRow}>
+                <input
+                  type="checkbox"
+                  checked={typeFilters.size === 0}
+                  onChange={() => setTypeFilters(new Set())}
+                />
+                All Types
+              </label>
+              <div className={styles.typeFilterDivider} />
+              {availableTypes.map((type) => (
+                <label key={type} className={styles.typeFilterRow}>
+                  <input
+                    type="checkbox"
+                    checked={typeFilters.has(type)}
+                    onChange={() => toggleTypeFilter(type)}
+                  />
+                  {type}
+                </label>
+              ))}
+            </div>
+          </details>
           <Input
             placeholder="Search names, address, scope..."
             value={search}
@@ -484,6 +826,15 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy }) 
 
       <div className={styles.tableWrap}>
         <table className={styles.table}>
+          <colgroup>
+            <col style={{ width: "44px" }} />
+            <col style={{ width: "180px" }} />
+            <col style={{ width: "200px" }} />
+            <col style={{ width: `${addressColumnWidth.toString()}px` }} />
+            <col style={{ width: "140px" }} />
+            <col style={{ width: "140px" }} />
+            <col style={{ width: "180px" }} />
+          </colgroup>
           <thead>
             <tr>
               <th className={styles.headCell}>
@@ -505,11 +856,21 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy }) 
               </th>
               <th className={styles.headCell}>Actions</th>
               {RANGE_COLUMNS.map((column) => (
-                <th key={column} className={styles.headCell}>
+                <th
+                  key={column}
+                  className={`${styles.headCell} ${column === "address" ? styles.addressHeadCell : ""}`}
+                >
                   <button type="button" className={styles.sortBtn} onClick={() => toggleSort(column)}>
                     {column[0].toUpperCase() + column.slice(1)}
                     {sortColumn === column ? (sortDirection === "asc" ? " ▲" : " ▼") : ""}
                   </button>
+                  {column === "address" ? (
+                    <span
+                      className={styles.columnResizeHandle}
+                      onMouseDown={startAddressResize}
+                      title="Drag to resize Address column"
+                    />
+                  ) : null}
                 </th>
               ))}
             </tr>
@@ -521,7 +882,7 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy }) 
                   <input
                     type="checkbox"
                     checked={selectedIds.has(row.id)}
-                    disabled={row.kind !== "NamedRange"}
+                    disabled={row.kind !== "NamedRange" || !row.isRange}
                     onChange={() =>
                       setSelectedIds((prev) => {
                         const next = new Set(prev);
@@ -581,11 +942,16 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy }) 
                   </div>
                 </td>
                 <td className={styles.cell}>
-                  {row.isRange || row.kind === "Shape" ? (
+                  {row.kind === "NamedRange" ? (
                     <button
                       type="button"
                       className={styles.linkBtn}
-                      onClick={() => void selectNamedRangeAddress(row.address, row.sheet)}
+                      onClick={() => void openNameLink(row)}
+                      title={
+                        row.isRange
+                          ? `Go to ${row.address}`
+                          : `Formula-based name (${row.type})`
+                      }
                     >
                       {row.name}
                     </button>
@@ -593,10 +959,26 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy }) 
                     row.name
                   )}
                 </td>
-                <td className={styles.cell}>{row.address}</td>
-                <td className={styles.cell}>{row.sheet}</td>
-                <td className={styles.cell}>{row.scope}</td>
-                <td className={styles.cell}>{row.type}</td>
+                <td className={styles.cell}>
+                  <span className={styles.cellEllipsis} title={row.address}>
+                    {row.address}
+                  </span>
+                </td>
+                <td className={styles.cell}>
+                  <span className={styles.cellEllipsis} title={row.sheet}>
+                    {row.sheet}
+                  </span>
+                </td>
+                <td className={styles.cell}>
+                  <span className={styles.cellEllipsis} title={row.scope}>
+                    {row.scope}
+                  </span>
+                </td>
+                <td className={styles.cell}>
+                  <span className={styles.cellEllipsis} title={row.type}>
+                    {row.type}
+                  </span>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -609,11 +991,22 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy }) 
       {createState.open ? (
         <div className={styles.modalBackdrop}>
           <div className={styles.modal}>
-            <Text className={shared.cardTitle}>Create Named Range</Text>
+            <Text className={shared.cardTitle}>Create Name</Text>
             <div className={styles.modalGrid}>
               <div>
                 <Text className={shared.mutedText}>Name</Text>
                 <Input value={createState.name} onChange={(_, data) => setCreateState((p) => ({ ...p, name: data.value }))} />
+              </div>
+              <div>
+                <Text className={shared.mutedText}>Create As</Text>
+                <Select
+                  value={createState.createType}
+                  onChange={(_, data) => setCreateState((p) => ({ ...p, createType: data.value as CreateEntryType }))}
+                >
+                  <option value="Range">Range</option>
+                  <option value="Function">Function (LAMBDA)</option>
+                  <option value="List">List (Named Array)</option>
+                </Select>
               </div>
               <div>
                 <Text className={shared.mutedText}>Scope Type</Text>
@@ -625,13 +1018,6 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy }) 
                   <option value="Worksheet">Worksheet</option>
                 </Select>
               </div>
-              <div className={styles.full}>
-                <Text className={shared.mutedText}>Address</Text>
-                <Input
-                  value={createState.address}
-                  onChange={(_, data) => setCreateState((p) => ({ ...p, address: data.value }))}
-                />
-              </div>
               {createState.scopeType === "Worksheet" ? (
                 <div className={styles.full}>
                   <Text className={shared.mutedText}>Worksheet Scope</Text>
@@ -642,22 +1028,82 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy }) 
                   />
                 </div>
               ) : null}
+              {createState.createType === "Range" ? (
+                <div className={styles.full}>
+                  <Text className={shared.mutedText}>Address</Text>
+                  <Input
+                    value={createState.address}
+                    onChange={(_, data) => setCreateState((p) => ({ ...p, address: data.value }))}
+                  />
+                </div>
+              ) : null}
+              {createState.createType === "Function" ? (
+                <>
+                  <div className={styles.full}>
+                    <Text className={shared.mutedText}>Arguments (comma-separated)</Text>
+                    <Input
+                      value={createState.lambdaArgs}
+                      placeholder="table, lookupValue"
+                      onChange={(_, data) => setCreateState((p) => ({ ...p, lambdaArgs: data.value }))}
+                    />
+                  </div>
+                  <div className={styles.full}>
+                    <Text className={shared.mutedText}>Arguments Preview</Text>
+                    {createFunctionArgsPreview.length > 0 ? (
+                      <div className={styles.chipRow}>
+                        {createFunctionArgsPreview.map((arg, index) => (
+                          <span key={`${arg}-${index.toString()}`} className={styles.chip}>
+                            {arg}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <Text className={shared.mutedText}>No arguments set. The function will save as `LAMBDA(calculation)`.</Text>
+                    )}
+                  </div>
+                  <div className={styles.full}>
+                    <Text className={shared.mutedText}>Function Definition</Text>
+                    <textarea
+                      className={styles.multilineInput}
+                      value={createState.functionBody}
+                      onChange={(event) => setCreateState((p) => ({ ...p, functionBody: event.target.value }))}
+                      placeholder="Enter a formula body, or paste a full LAMBDA formula."
+                    />
+                  </div>
+                </>
+              ) : null}
+              {createState.createType === "List" ? (
+                <div className={styles.full}>
+                  <Text className={shared.mutedText}>List Values</Text>
+                  <textarea
+                    className={styles.multilineInput}
+                    value={createState.listValues}
+                    onChange={(event) => setCreateState((p) => ({ ...p, listValues: event.target.value }))}
+                    placeholder={"Enter values separated by commas or new lines.\nExample:\nOpen\nIn Progress\nClosed"}
+                  />
+                  <Text className={shared.mutedText}>
+                    Saved as a named array formula so it can be used in data validation lists.
+                  </Text>
+                </div>
+              ) : null}
             </div>
             <div className={styles.modalActions}>
-              <Button
-                onClick={() =>
-                  void captureSelection((selection) =>
-                    setCreateState((p) => ({
-                      ...p,
-                      address: selection.address,
-                      fallbackSheet: selection.sheet,
-                      scope: selection.sheet,
-                    }))
-                  )
-                }
-              >
-                Use Selection
-              </Button>
+              {createState.createType === "Range" ? (
+                <Button
+                  onClick={() =>
+                    void captureSelection((selection) =>
+                      setCreateState((p) => ({
+                        ...p,
+                        address: selection.address,
+                        fallbackSheet: selection.sheet,
+                        scope: selection.sheet,
+                      }))
+                    )
+                  }
+                >
+                  Use Selection
+                </Button>
+              ) : null}
               <Button onClick={() => setCreateState((p) => ({ ...p, open: false }))}>Cancel</Button>
               <Button appearance="primary" disabled={submitting} onClick={() => void submitCreate()}>
                 Create

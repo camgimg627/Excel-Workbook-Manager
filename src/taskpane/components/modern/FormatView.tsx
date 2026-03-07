@@ -10,8 +10,6 @@ import {
   EyeOff20Regular,
   Eyedropper20Regular,
   Grid20Regular,
-  Pin20Regular,
-  PinOff20Regular,
   SlideHide20Regular,
   TableFreezeColumn20Regular,
   TableFreezeColumnAndRow20Regular,
@@ -224,7 +222,6 @@ const styles = makeStyles({
     zIndex: 6,
     boxShadow: "0 2px 8px rgba(17,24,39,0.08)",
   },
-  utilityFloatingCard: { boxShadow: "0 1px 4px rgba(17,24,39,0.06)" },
   utilityHeaderRow: {
     display: "grid",
     gridTemplateColumns: "auto 1fr auto",
@@ -545,7 +542,6 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
   const [columnWidthInput, setColumnWidthInput] = useState("14");
   const [rowHeightInput, setRowHeightInput] = useState("18");
   const [utilityMenu, setUtilityMenu] = useState<UtilityMenu>("view");
-  const [utilityPinned, setUtilityPinned] = useState(true);
   const [utilityCollapsed, setUtilityCollapsed] = useState(false);
   const [applyTemplateAll, setApplyTemplateAll] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -1104,7 +1100,7 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
     UTILITY_MENU_ITEMS.find((item) => item.key === utilityMenu)?.label ?? "Utilities";
   const formattingUtilitiesCard = (
     <div
-      className={`${s.utilityDock} ${utilityPinned ? s.utilityPinnedCard : s.utilityFloatingCard} ${
+      className={`${s.utilityDock} ${s.utilityPinnedCard} ${
         utilityCollapsed ? s.utilityDockCollapsed : ""
       }`}
     >
@@ -1130,15 +1126,6 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
           <div />
         )}
         <div className={s.utilityHeaderActions}>
-          <button
-            className={s.utilityHeaderBtn}
-            type="button"
-            onClick={() => setUtilityPinned((prev) => !prev)}
-            title={utilityPinned ? "Unpin utilities" : "Pin utilities"}
-            aria-label={utilityPinned ? "Unpin utilities" : "Pin utilities"}
-          >
-            {utilityPinned ? <Pin20Regular /> : <PinOff20Regular />}
-          </button>
           <button
             className={s.utilityHeaderBtn}
             type="button"
