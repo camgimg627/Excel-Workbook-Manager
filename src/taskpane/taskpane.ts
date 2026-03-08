@@ -212,6 +212,7 @@ export interface ShapeBuilderTextSelectionFormatRequest {
 }
 
 export type CellStylePreset = "Input Cell" | "Parameter Cell" | "Header" | "Subheader";
+export type WorkbookWindowArrangeLayout = "Tiled" | "Horizontal" | "Vertical" | "Cascade";
 export type InsertableShapeType =
   | "Rectangle"
   | "RoundedRectangle"
@@ -697,6 +698,122 @@ export async function toggleGridlines() {
     sheet.load("showGridlines");
     await context.sync();
     sheet.showGridlines = !sheet.showGridlines;
+  });
+}
+
+function ensureWorkbookWindowApiSupport(): void {
+  if (typeof Office === "undefined") {
+    throw new Error("Office.js is not available.");
+  }
+  const supported = Office.context?.requirements?.isSetSupported("ExcelApiDesktop", "1.1");
+  if (!supported) {
+    throw new Error("Workbook window controls are available in Excel desktop only.");
+  }
+}
+
+function normalizeWindowGroupKey(windowName: string): string {
+  const trimmed = asString(windowName).trim();
+  const separatorIndex = trimmed.lastIndexOf(":");
+  if (separatorIndex <= 0) {
+    return trimmed.toLowerCase();
+  }
+  return trimmed.slice(0, separatorIndex).toLowerCase();
+}
+
+export async function openNewWorkbookWindow(): Promise<void> {
+  ensureWorkbookWindowApiSupport();
+
+  await Excel.run(async (context) => {
+    context.workbook.application.activeWindow.newWindow();
+    await context.sync();
+  });
+}
+
+export async function arrangeWorkbookWindows(layout: WorkbookWindowArrangeLayout): Promise<void> {
+  ensureWorkbookWindowApiSupport();
+
+  await Excel.run(async (context) => {
+    const application = context.workbook.application;
+    const windows = application.windows;
+    const activeWindow = application.activeWindow;
+
+    windows.load("items/name,items/type,items/windowState");
+    activeWindow.load("name,left,top,usableWidth,usableHeight");
+    await context.sync();
+
+    const activeGroupKey = normalizeWindowGroupKey(activeWindow.name);
+    const workbookWindows = windows.items.filter((windowItem) => asString(windowItem.type) === Excel.WindowType.workbook);
+    const sameWorkbookWindows = workbookWindows.filter(
+      (windowItem) => normalizeWindowGroupKey(windowItem.name) === activeGroupKey
+    );
+    const targetWindows = sameWorkbookWindows.length >= 2 ? sameWorkbookWindows : workbookWindows;
+
+    if (targetWindows.length < 2) {
+      throw new Error("Open at least two workbook windows before arranging.");
+    }
+
+    const originLeft = Math.max(0, asNumber(activeWindow.left, 0));
+    const originTop = Math.max(0, asNumber(activeWindow.top, 0));
+    const availableWidth = Math.max(460, asNumber(activeWindow.usableWidth, 1280));
+    const availableHeight = Math.max(320, asNumber(activeWindow.usableHeight, 760));
+
+    targetWindows.forEach((windowItem) => {
+      windowItem.windowState = Excel.WindowState.normal;
+    });
+
+    if (layout === "Vertical") {
+      const columnWidth = Math.max(320, Math.floor(availableWidth / targetWindows.length));
+      targetWindows.forEach((windowItem, index) => {
+        windowItem.left = originLeft + index * columnWidth;
+        windowItem.top = originTop;
+        windowItem.width = columnWidth;
+        windowItem.height = availableHeight;
+      });
+      await context.sync();
+      return;
+    }
+
+    if (layout === "Horizontal") {
+      const rowHeight = Math.max(240, Math.floor(availableHeight / targetWindows.length));
+      targetWindows.forEach((windowItem, index) => {
+        windowItem.left = originLeft;
+        windowItem.top = originTop + index * rowHeight;
+        windowItem.width = availableWidth;
+        windowItem.height = rowHeight;
+      });
+      await context.sync();
+      return;
+    }
+
+    if (layout === "Cascade") {
+      const offset = Math.max(24, Math.min(48, Math.floor(Math.min(availableWidth, availableHeight) / 16)));
+      const cascadeWidth = Math.max(440, availableWidth - offset * Math.max(targetWindows.length - 1, 0));
+      const cascadeHeight = Math.max(300, availableHeight - offset * Math.max(targetWindows.length - 1, 0));
+      targetWindows.forEach((windowItem, index) => {
+        windowItem.left = originLeft + index * offset;
+        windowItem.top = originTop + index * offset;
+        windowItem.width = cascadeWidth;
+        windowItem.height = cascadeHeight;
+      });
+      await context.sync();
+      return;
+    }
+
+    // Tiled
+    const count = targetWindows.length;
+    const columns = Math.ceil(Math.sqrt(count));
+    const rows = Math.ceil(count / columns);
+    const cellWidth = Math.max(320, Math.floor(availableWidth / columns));
+    const cellHeight = Math.max(220, Math.floor(availableHeight / rows));
+    targetWindows.forEach((windowItem, index) => {
+      const row = Math.floor(index / columns);
+      const column = index % columns;
+      windowItem.left = originLeft + column * cellWidth;
+      windowItem.top = originTop + row * cellHeight;
+      windowItem.width = cellWidth;
+      windowItem.height = cellHeight;
+    });
+    await context.sync();
   });
 }
 

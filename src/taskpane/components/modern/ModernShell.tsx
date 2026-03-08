@@ -152,6 +152,7 @@ const ModernShell: React.FC<ModernShellProps> = ({
   const [expandedRail, setExpandedRail] = useState<boolean>(false);
   const [menuOpen, setMenuOpen] = useState<boolean>(false);
   const isFormulaTarget = activeTarget === "formulas";
+  const isFormatTarget = activeTarget === "format";
 
   const navItems = useMemo<NavItem[]>(
     () => [
@@ -223,7 +224,10 @@ const ModernShell: React.FC<ModernShellProps> = ({
           })}
         </div>
 
-        <div className={styles.content} style={{ padding: isFormulaTarget ? "12px 16px" : "24px" }}>
+        <div
+          className={styles.content}
+          style={{ padding: isFormulaTarget ? "12px 16px" : isFormatTarget ? "0 24px 24px" : "24px" }}
+        >
           {activeTarget === "names" || activeTarget === "names-create" ? (
             <NamesView createRequestId={createRequestId} onOpenLegacy={openLegacy} />
           ) : null}

@@ -52,7 +52,9 @@ import {
   listShapeBuilderShapes,
   listSheetFormats,
   NO_FILL_COLOR_TOKEN,
+  openNewWorkbookWindow,
   openFormatEditorPopout,
+  arrangeWorkbookWindows,
   recaptureSheetFormatFromSelection,
   refreshPivotTables,
   setSelectionColumnWidth,
@@ -212,26 +214,24 @@ const styles = makeStyles({
     gap: "10px",
   },
   utilityDock: {
-    borderRadius: "10px",
+    borderRadius: "0",
     border: `1px solid ${MODERN_TOKENS.colorBorder}`,
     backgroundColor: "#FFFFFF",
     padding: "6px 8px",
     display: "grid",
     gap: "6px",
-  },
-  utilityDockCollapsed: {
-    padding: "4px 8px",
-    gap: "4px",
+    width: "100%",
+    boxSizing: "border-box",
   },
   utilityPinnedCard: {
     position: "sticky",
-    top: "8px",
+    top: "0",
     zIndex: 6,
-    boxShadow: "0 2px 8px rgba(17,24,39,0.08)",
+    boxShadow: "none",
   },
   utilityHeaderRow: {
     display: "grid",
-    gridTemplateColumns: "auto 1fr auto",
+    gridTemplateColumns: "auto 1fr",
     alignItems: "center",
     gap: "6px",
   },
@@ -255,19 +255,6 @@ const styles = makeStyles({
     fontWeight: 700,
     padding: "2px 6px",
     whiteSpace: "nowrap",
-  },
-  utilityHeaderActions: { display: "inline-flex", alignItems: "center", gap: "6px" },
-  utilityHeaderBtn: {
-    width: "24px",
-    height: "24px",
-    borderRadius: "6px",
-    border: `1px solid ${MODERN_TOKENS.colorBorder}`,
-    backgroundColor: "#FFFFFF",
-    color: MODERN_TOKENS.colorTextMuted,
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    cursor: "pointer",
   },
   row: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", flexWrap: "wrap" },
   title: { fontSize: "13px", fontWeight: 700, textTransform: "uppercase", color: MODERN_TOKENS.colorTextMuted },
@@ -467,7 +454,7 @@ const styles = makeStyles({
   },
   utilityMenuBar: {
     display: "flex",
-    gap: "6px",
+    gap: "0px",
     flexWrap: "wrap",
     minWidth: 0,
     justifyContent: "center",
@@ -496,7 +483,7 @@ const styles = makeStyles({
     borderTop: `1px solid ${MODERN_TOKENS.colorBorder}`,
     paddingTop: "6px",
     display: "grid",
-    gap: "6px",
+    gap: "0px",
   },
   utilityActionsRow: { display: "flex", flexWrap: "wrap", gap: "8px" },
   utilityBtn: {
@@ -549,7 +536,6 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
   const [columnWidthInput, setColumnWidthInput] = useState("14");
   const [rowHeightInput, setRowHeightInput] = useState("18");
   const [utilityMenu, setUtilityMenu] = useState<UtilityMenu>("view");
-  const [utilityCollapsed, setUtilityCollapsed] = useState(false);
   const [applyTemplateAll, setApplyTemplateAll] = useState(false);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
@@ -1115,58 +1101,83 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
   const fontDisplayColor = draft ? toUpperHexOrFallback(draft.fontColor, "#1F2937") : "#1F2937";
   const activeUtilityMenuLabel =
     UTILITY_MENU_ITEMS.find((item) => item.key === utilityMenu)?.label ?? "Utilities";
+  const utilityCardEdgeStyle = isPopout
+    ? undefined
+    : { marginLeft: "-24px", marginRight: "-24px", width: "calc(100% + 48px)" };
   const formattingUtilitiesCard = (
-    <div
-      className={`${s.utilityDock} ${s.utilityPinnedCard} ${
-        utilityCollapsed ? s.utilityDockCollapsed : ""
-      }`}
-    >
+    <div className={`${s.utilityDock} ${s.utilityPinnedCard}`} style={utilityCardEdgeStyle}>
       <div className={s.utilityHeaderRow}>
         <div className={s.utilityHeadingWrap}>
           <Text className={s.utilityTitleSmall}>Formatting Utilities</Text>
           <span className={s.utilityActivePill}>{activeUtilityMenuLabel}</span>
         </div>
-        {!utilityCollapsed ? (
-          <div className={s.utilityMenuBar}>
-            {UTILITY_MENU_ITEMS.map((item) => (
-              <button
-                key={item.key}
-                className={`${s.utilityMenuTab} ${utilityMenu === item.key ? s.utilityMenuTabActive : ""}`}
-                type="button"
-                onClick={() => setUtilityMenu(item.key)}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
-        ) : (
-          <div />
-        )}
-        <div className={s.utilityHeaderActions}>
-          <button
-            className={s.utilityHeaderBtn}
-            type="button"
-            onClick={() => setUtilityCollapsed((prev) => !prev)}
-            title={utilityCollapsed ? "Expand utilities" : "Collapse utilities"}
-            aria-label={utilityCollapsed ? "Expand utilities" : "Collapse utilities"}
-          >
-            {utilityCollapsed ? <ChevronDown20Regular /> : <ChevronUp20Regular />}
-          </button>
+        <div className={s.utilityMenuBar}>
+          {UTILITY_MENU_ITEMS.map((item) => (
+            <button
+              key={item.key}
+              className={`${s.utilityMenuTab} ${utilityMenu === item.key ? s.utilityMenuTabActive : ""}`}
+              type="button"
+              onClick={() => setUtilityMenu(item.key)}
+            >
+              {item.label}
+            </button>
+          ))}
         </div>
       </div>
-      {!utilityCollapsed ? (
-        <>
-          <div className={s.utilityPanel}>
+      <div className={s.utilityPanel}>
         {utilityMenu === "view" ? (
-          <div className={s.utilityActionsRow}>
-            <button
-              className={s.utilityBtn}
-              type="button"
-              onClick={() => void runUtilityAction("Gridlines toggled.", toggleGridlines)}
-            >
-              <Grid20Regular /> Toggle Gridlines
-            </button>
-          </div>
+          <>
+            <div className={s.utilityActionsRow}>
+              <button
+                className={s.utilityBtn}
+                type="button"
+                onClick={() => void runUtilityAction("Gridlines toggled.", toggleGridlines)}
+              >
+                <Grid20Regular /> Toggle Gridlines
+              </button>
+              <button
+                className={s.utilityBtn}
+                type="button"
+                onClick={() => void runUtilityAction("New workbook window opened.", openNewWorkbookWindow)}
+              >
+                <Add20Regular /> New Window
+              </button>
+            </div>
+            <Text className={s.label}>Arrange Windows</Text>
+            <Text className={s.muted}>Excel desktop supports Tiled, Horizontal, Vertical, and Cascade layouts.</Text>
+            <div className={s.utilityActionsRow}>
+              <button
+                className={s.utilityBtn}
+                type="button"
+                onClick={() => void runUtilityAction("Windows arranged (tiled).", () => arrangeWorkbookWindows("Tiled"))}
+              >
+                Tiled
+              </button>
+              <button
+                className={s.utilityBtn}
+                type="button"
+                onClick={() =>
+                  void runUtilityAction("Windows arranged (horizontal).", () => arrangeWorkbookWindows("Horizontal"))
+                }
+              >
+                Horizontal
+              </button>
+              <button
+                className={s.utilityBtn}
+                type="button"
+                onClick={() => void runUtilityAction("Windows arranged (vertical).", () => arrangeWorkbookWindows("Vertical"))}
+              >
+                Vertical
+              </button>
+              <button
+                className={s.utilityBtn}
+                type="button"
+                onClick={() => void runUtilityAction("Windows arranged (cascade).", () => arrangeWorkbookWindows("Cascade"))}
+              >
+                Cascade
+              </button>
+            </div>
+          </>
         ) : null}
         {utilityMenu === "freeze" ? (
           <div className={s.utilityActionsRow}>
@@ -1270,14 +1281,14 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
             </div>
           </>
         ) : null}
-          </div>
-        </>
-      ) : null}
+      </div>
     </div>
   );
 
   return (
     <div className={s.root}>
+      {formattingUtilitiesCard}
+
       <div className={s.hero}>
         <div className={s.heroTop}>
           <div>
@@ -1307,8 +1318,6 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
           </Button>
         </div>
       </div>
-
-      {formattingUtilitiesCard}
 
       <div className={s.card}>
         <div className={s.row}>
