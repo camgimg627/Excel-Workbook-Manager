@@ -405,7 +405,11 @@ function normalizeReference(addressInput: string, fallbackSheet: string): string
   if (cleaned.includes("!")) {
     return cleaned;
   }
-  return `${quoteSheetName(fallbackSheet)}!${cleaned}`;
+  const normalizedFallbackSheet = fallbackSheet.trim();
+  if (!normalizedFallbackSheet) {
+    return cleaned;
+  }
+  return `${quoteSheetName(normalizedFallbackSheet)}!${cleaned}`;
 }
 
 function classifyRangeShape(rowCount: number, columnCount: number): NamedRangeRecord["type"] {
@@ -1548,6 +1552,10 @@ function buildDestinationId(
     return `sheet::${sheetName}`;
   }
   if (type === "NamedRange") {
+    const normalizedSheetName = sheetName.trim();
+    if (normalizedSheetName && normalizedSheetName.toLowerCase() !== "workbook") {
+      return `named::${normalizedSheetName}::${objectName}`;
+    }
     return `named::${objectName}`;
   }
   if (type === "Table") {
@@ -1560,6 +1568,21 @@ interface ParsedNavigationDestination {
   type: NavigationDestinationType | "ExternalUrl" | "SheetCell";
   sheetName: string;
   objectName: string;
+}
+
+function parseLegacyDestinationId(destination: string): ParsedNavigationDestination {
+  const normalized = normalizeMaybeAddress(destination);
+  const parsed = splitQualifiedAddress(normalized);
+  if (parsed.sheet && parsed.address) {
+    if (isCellAddressExpression(parsed.address)) {
+      return { type: "SheetCell", sheetName: parsed.sheet, objectName: parsed.address };
+    }
+    return { type: "NamedRange", sheetName: parsed.sheet, objectName: parsed.address };
+  }
+  if (isCellAddressExpression(normalized)) {
+    return { type: "SheetCell", sheetName: "", objectName: normalized };
+  }
+  return { type: "NamedRange", sheetName: "", objectName: normalized };
 }
 
 function parseDestinationId(destinationId: string): ParsedNavigationDestination {
@@ -1578,6 +1601,9 @@ function parseDestinationId(destinationId: string): ParsedNavigationDestination 
   if (prefix === "sheet" && parts.length >= 2) {
     return { type: "Sheet", sheetName: parts.slice(1).join("::"), objectName: "" };
   }
+  if (prefix === "named" && parts.length >= 3) {
+    return { type: "NamedRange", sheetName: parts[1], objectName: parts.slice(2).join("::") };
+  }
   if (prefix === "named" && parts.length >= 2) {
     return { type: "NamedRange", sheetName: "", objectName: parts.slice(1).join("::") };
   }
@@ -1586,6 +1612,9 @@ function parseDestinationId(destinationId: string): ParsedNavigationDestination 
   }
   if (prefix === "chart" && parts.length >= 3) {
     return { type: "Chart", sheetName: parts[1], objectName: parts.slice(2).join("::") };
+  }
+  if (!normalized.includes("::")) {
+    return parseLegacyDestinationId(normalized);
   }
   throw new Error("Invalid navigation destination.");
 }
@@ -1605,7 +1634,9 @@ export async function listNavigationDestinations(): Promise<NavigationDestinatio
       tables.load("items/name");
       const charts = sheet.charts;
       charts.load("items/name");
-      return { sheetName: sheet.name, tables, charts };
+      const names = sheet.names;
+      names.load("items/name,items/formula");
+      return { sheetName: sheet.name, tables, charts, names };
     });
     await context.sync();
 
@@ -1630,7 +1661,7 @@ export async function listNavigationDestinations(): Promise<NavigationDestinatio
       }
       const parsed = splitQualifiedAddress(asString(namedItem.formula));
       options.push({
-        id: buildDestinationId("NamedRange", parsed.sheet || "Workbook", name),
+        id: buildDestinationId("NamedRange", "", name),
         type: "NamedRange",
         label: `Name: ${name}`,
         sheetName: parsed.sheet || "Workbook",
@@ -1642,6 +1673,21 @@ export async function listNavigationDestinations(): Promise<NavigationDestinatio
       if (isInternalWorkbookSheet(entry.sheetName)) {
         return;
       }
+      entry.names.items.forEach((namedItem) => {
+        const name = namedItem.name;
+        const formula = normalizeDisplayAddress(asString(namedItem.formula));
+        if (name.toLowerCase().startsWith("_xl") || name.includes("(") || formula.includes("(")) {
+          return;
+        }
+        const parsed = splitQualifiedAddress(asString(namedItem.formula));
+        options.push({
+          id: buildDestinationId("NamedRange", entry.sheetName, name),
+          type: "NamedRange",
+          label: `Name: ${name} (${entry.sheetName})`,
+          sheetName: parsed.sheet || entry.sheetName,
+          address: parsed.address || formula,
+        });
+      });
       entry.tables.items.forEach((table) => {
         options.push({
           id: buildDestinationId("Table", entry.sheetName, table.name),
@@ -1717,7 +1763,9 @@ export async function activateNavigationDestination(destinationId: string): Prom
 
   await Excel.run(async (context) => {
     if (parsed.type === "SheetCell") {
-      const targetSheet = context.workbook.worksheets.getItem(parsed.sheetName);
+      const targetSheet = parsed.sheetName
+        ? context.workbook.worksheets.getItem(parsed.sheetName)
+        : context.workbook.worksheets.getActiveWorksheet();
       targetSheet.activate();
       const targetRange = targetSheet.getRange(parsed.objectName);
       targetRange.select();
@@ -1734,11 +1782,33 @@ export async function activateNavigationDestination(destinationId: string): Prom
     }
 
     if (parsed.type === "NamedRange") {
-      const named = context.workbook.names.getItem(parsed.objectName);
-      const range = named.getRange();
-      range.select();
+      const namedRangeName = parsed.objectName.trim();
+      if (!namedRangeName) {
+        throw new Error("Named range destination is missing a name.");
+      }
+
+      if (parsed.sheetName) {
+        const sheet = context.workbook.worksheets.getItem(parsed.sheetName);
+        const localNamed = sheet.names.getItemOrNullObject(namedRangeName);
+        localNamed.load("name");
+        await context.sync();
+        if (!localNamed.isNullObject) {
+          sheet.activate();
+          localNamed.getRange().select();
+          await context.sync();
+          return;
+        }
+      }
+
+      const workbookNamed = context.workbook.names.getItemOrNullObject(namedRangeName);
+      workbookNamed.load("name");
       await context.sync();
-      return;
+      if (!workbookNamed.isNullObject) {
+        workbookNamed.getRange().select();
+        await context.sync();
+        return;
+      }
+      throw new Error(`Named range "${namedRangeName}" was not found.`);
     }
 
     if (parsed.type === "Table") {
@@ -2906,10 +2976,24 @@ export async function updateNamedRange(
   fallbackSheet: string,
   referenceType: "Reference" | "Formula" = "Reference"
 ) {
+  const normalizedScope = scope.trim();
+  const normalizedFallbackSheet = fallbackSheet.trim();
+  if (scopeType === "Worksheet" && isInternalWorkbookSheet(normalizedScope)) {
+    throw new Error("Worksheet-scoped names cannot target internal Workbook Manager sheets.");
+  }
+  if (
+    referenceType === "Reference" &&
+    !address.includes("!") &&
+    normalizedFallbackSheet &&
+    isInternalWorkbookSheet(normalizedFallbackSheet)
+  ) {
+    throw new Error("Select a workbook sheet before creating or updating a range reference.");
+  }
+
   const candidates =
     referenceType === "Formula"
       ? buildArrayFormulaSeparatorCandidates(address)
-      : [normalizeReference(address, fallbackSheet)];
+      : [normalizeReference(address, normalizedFallbackSheet)];
 
   let lastError: unknown = null;
   for (const candidate of candidates) {
@@ -2918,7 +3002,7 @@ export async function updateNamedRange(
         const collection =
           scopeType === "Workbook"
             ? context.workbook.names
-            : context.workbook.worksheets.getItem(scope).names;
+            : context.workbook.worksheets.getItem(normalizedScope).names;
 
         if (oldName.toUpperCase() === newName.toUpperCase()) {
           const item = collection.getItem(oldName);
@@ -2948,10 +3032,24 @@ export async function addNamedRange(
   fallbackSheet: string,
   referenceType: "Reference" | "Formula" = "Reference"
 ) {
+  const normalizedScope = scope.trim();
+  const normalizedFallbackSheet = fallbackSheet.trim();
+  if (scopeType === "Worksheet" && isInternalWorkbookSheet(normalizedScope)) {
+    throw new Error("Worksheet-scoped names cannot target internal Workbook Manager sheets.");
+  }
+  if (
+    referenceType === "Reference" &&
+    !address.includes("!") &&
+    normalizedFallbackSheet &&
+    isInternalWorkbookSheet(normalizedFallbackSheet)
+  ) {
+    throw new Error("Select a workbook sheet before creating a range reference.");
+  }
+
   const candidates =
     referenceType === "Formula"
       ? buildArrayFormulaSeparatorCandidates(address)
-      : [normalizeReference(address, fallbackSheet)];
+      : [normalizeReference(address, normalizedFallbackSheet)];
 
   let lastError: unknown = null;
   for (const candidate of candidates) {
@@ -2960,7 +3058,7 @@ export async function addNamedRange(
         const collection =
           scopeType === "Workbook"
             ? context.workbook.names
-            : context.workbook.worksheets.getItem(scope).names;
+            : context.workbook.worksheets.getItem(normalizedScope).names;
 
         collection.add(name, candidate);
         await context.sync();
@@ -3036,7 +3134,9 @@ export async function deleteNamedRangeWithOptions(
 export async function selectNamedRangeAddress(address: string, fallbackSheet: string) {
   await Excel.run(async (context) => {
     const parsed = getSheetAndAddress(address, fallbackSheet);
-    const range = context.workbook.worksheets.getItem(parsed.sheet).getRange(parsed.address);
+    const targetSheet = context.workbook.worksheets.getItem(parsed.sheet);
+    targetSheet.activate();
+    const range = targetSheet.getRange(parsed.address);
     range.select();
     await context.sync();
   });

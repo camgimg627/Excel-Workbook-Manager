@@ -68,11 +68,13 @@ import { MODERN_TOKENS } from "./designTokens";
 interface FormatViewProps {
   onOpenLegacy: () => void;
   isPopout?: boolean;
+  embedded?: boolean;
 }
 
 type EditorTab = "shape" | "style" | "size" | "link";
 type ShapeLinkFilter = "all" | "none" | "internal" | "external";
 type UtilityMenu = "view" | "freeze" | "data" | "sheet" | "sizing";
+type LayoutSection = "gridFreeze" | "sheetPresentation" | "quickFormatting";
 type StyleColorTarget = "fill" | "outline" | "font";
 type StyleBaseline = Pick<
   ShapeBuilderShapeRecord,
@@ -168,36 +170,105 @@ const sortShapesBySelectionPanePosition = (records: ShapeBuilderShapeRecord[]): 
   [...records].sort(compareShapesBySelectionPanePosition);
 
 const styles = makeStyles({
-  root: { display: "grid", gap: "16px" },
-  hero: {
-    borderRadius: "12px",
+  root: { display: "grid", gap: "10px" },
+  workspaceHeader: {
+    borderRadius: "10px",
     border: `1px solid ${MODERN_TOKENS.colorBorder}`,
-    backgroundColor: "#4579C7",
-    color: "#FFFFFF",
-    padding: "14px",
+    backgroundColor: "#FFFFFF",
+    boxShadow: "0 1px 2px rgba(17,24,39,0.05)",
+    padding: "10px 12px",
+    display: "grid",
+    gap: "4px",
+  },
+  workspaceHeaderTop: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "8px",
+    flexWrap: "wrap",
+  },
+  workspaceTitle: { fontSize: "20px", lineHeight: "22px", fontWeight: 700 },
+  workspaceSub: { fontSize: "12px", lineHeight: "16px", color: MODERN_TOKENS.colorTextMuted },
+  workspaceActionBar: {
+    borderRadius: "10px",
+    border: `1px solid ${MODERN_TOKENS.colorBorder}`,
+    backgroundColor: "#FFFFFF",
+    padding: "8px",
+    display: "flex",
+    gap: "8px",
+    alignItems: "center",
+    flexWrap: "wrap",
+  },
+  workspaceActionHint: {
+    marginLeft: "auto",
+    fontSize: "11px",
+    lineHeight: "14px",
+    color: MODERN_TOKENS.colorTextMuted,
+  },
+  sectionStack: { display: "grid", gap: "8px", alignContent: "start" },
+  sectionCard: {
+    borderRadius: "10px",
+    border: `1px solid ${MODERN_TOKENS.colorBorder}`,
+    backgroundColor: "#FFFFFF",
+    overflow: "hidden",
+    boxShadow: "0 1px 2px rgba(17,24,39,0.05)",
+  },
+  sectionHeaderBtn: {
+    width: "100%",
+    border: "none",
+    borderRadius: 0,
+    backgroundColor: "#FFFFFF",
+    color: MODERN_TOKENS.colorText,
+    padding: "10px 12px",
+    display: "grid",
+    gridTemplateColumns: "1fr auto",
+    gap: "8px",
+    alignItems: "center",
+    textAlign: "left",
+    cursor: "pointer",
+    selectors: {
+      "&:hover": { backgroundColor: "#F8FAFC" },
+      "&:focus-visible": {
+        outline: `2px solid ${MODERN_TOKENS.colorBrand}`,
+        outlineOffset: "-2px",
+      },
+    },
+  },
+  sectionHeaderMain: { display: "inline-flex", alignItems: "center", gap: "8px", minWidth: 0 },
+  sectionTitle: { fontSize: "12px", lineHeight: "16px", fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  sectionMeta: { display: "inline-flex", alignItems: "center", gap: "6px", color: MODERN_TOKENS.colorTextMuted },
+  sectionCount: {
+    borderRadius: "999px",
+    border: `1px solid ${MODERN_TOKENS.colorBorder}`,
+    backgroundColor: "#F8FAFC",
+    color: MODERN_TOKENS.colorTextMuted,
+    fontSize: "10px",
+    lineHeight: "12px",
+    fontWeight: 700,
+    padding: "2px 6px",
+  },
+  sectionChip: {
+    borderRadius: "999px",
+    border: "1px solid #B8CDED",
+    backgroundColor: "#E9F1FD",
+    color: "#194279",
+    fontSize: "10px",
+    lineHeight: "12px",
+    fontWeight: 700,
+    padding: "2px 6px",
+  },
+  sectionBody: {
+    borderTop: `1px solid ${MODERN_TOKENS.colorBorder}`,
+    padding: "10px",
     display: "grid",
     gap: "10px",
-    boxShadow: MODERN_TOKENS.shadowCard,
-  },
-  heroTop: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px", flexWrap: "wrap" },
-  heroTitle: { fontSize: "28px", fontWeight: 700, lineHeight: "30px" },
-  heroSub: { fontSize: "14px", opacity: 0.92 },
-  heroBtns: { display: "flex", gap: "8px", flexWrap: "wrap" },
-  heroBtn: {
-    borderRadius: "8px",
-    border: "none",
-    backgroundColor: "rgba(255,255,255,0.2)",
-    color: "#FFFFFF",
-    padding: "8px 12px",
-    fontWeight: 600,
-    cursor: "pointer",
   },
   addBtn: {
     borderRadius: "8px",
-    border: "none",
-    backgroundColor: "#FFFFFF",
-    color: "#305E9D",
-    padding: "10px 14px",
+    border: `1px solid #B8CDED`,
+    backgroundColor: "#E9F1FD",
+    color: "#194279",
+    padding: "8px 12px",
     fontWeight: 700,
     cursor: "pointer",
     display: "inline-flex",
@@ -224,9 +295,7 @@ const styles = makeStyles({
     boxSizing: "border-box",
   },
   utilityPinnedCard: {
-    position: "sticky",
-    top: "0",
-    zIndex: 6,
+    position: "static",
     boxShadow: "none",
   },
   utilityHeaderRow: {
@@ -515,7 +584,7 @@ const styles = makeStyles({
   empty: { borderRadius: "8px", border: `1px dashed ${MODERN_TOKENS.colorBorder}`, padding: "12px", color: MODERN_TOKENS.colorTextMuted, fontSize: "12px" },
 });
 
-const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false }) => {
+const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false, embedded = false }) => {
   const s = styles();
   const [shapes, setShapes] = useState<ShapeBuilderShapeRecord[]>([]);
   const [destinations, setDestinations] = useState<NavigationDestinationOption[]>([]);
@@ -536,6 +605,7 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
   const [columnWidthInput, setColumnWidthInput] = useState("14");
   const [rowHeightInput, setRowHeightInput] = useState("18");
   const [utilityMenu, setUtilityMenu] = useState<UtilityMenu>("view");
+  const [expandedSections, setExpandedSections] = useState<LayoutSection[]>(["gridFreeze"]);
   const [applyTemplateAll, setApplyTemplateAll] = useState(false);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
@@ -1092,6 +1162,27 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
     );
   };
 
+  const openLayoutSection = (section: LayoutSection) => {
+    setExpandedSections((prev) => (prev.includes(section) ? prev : [section]));
+  };
+
+  const toggleLayoutSection = (section: LayoutSection) => {
+    setExpandedSections((prev) => (prev.includes(section) ? [] : [section]));
+  };
+
+  const applySelectedFormatActive = async () => {
+    if (!selectedFormatId) {
+      setErr("Select a format first.");
+      return;
+    }
+    try {
+      await applySheetFormat(selectedFormatId);
+      setOk("Format applied to active sheet.");
+    } catch (error) {
+      setErr(error);
+    }
+  };
+
   const fillDisplayColor = draft
     ? draft.fillColor === NO_FILL_COLOR_TOKEN
       ? NO_FILL_COLOR_TOKEN
@@ -1101,11 +1192,8 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
   const fontDisplayColor = draft ? toUpperHexOrFallback(draft.fontColor, "#1F2937") : "#1F2937";
   const activeUtilityMenuLabel =
     UTILITY_MENU_ITEMS.find((item) => item.key === utilityMenu)?.label ?? "Utilities";
-  const utilityCardEdgeStyle = isPopout
-    ? undefined
-    : { marginLeft: "-24px", marginRight: "-24px", width: "calc(100% + 48px)" };
   const formattingUtilitiesCard = (
-    <div className={`${s.utilityDock} ${s.utilityPinnedCard}`} style={utilityCardEdgeStyle}>
+    <div className={`${s.utilityDock} ${s.utilityPinnedCard}`}>
       <div className={s.utilityHeaderRow}>
         <div className={s.utilityHeadingWrap}>
           <Text className={s.utilityTitleSmall}>Formatting Utilities</Text>
@@ -1287,37 +1375,87 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
 
   return (
     <div className={s.root}>
-      {formattingUtilitiesCard}
+      {!embedded ? (
+        <>
+          <div className={s.workspaceHeader}>
+            <div className={s.workspaceHeaderTop}>
+              <Text className={s.workspaceTitle}>Layout</Text>
+              <Button size="small" appearance="primary" onClick={() => void applySelectedFormatActive()} disabled={!selectedFormatId}>
+                Apply
+              </Button>
+            </div>
+            <Text className={s.workspaceSub}>Apply workbook presentation and usability improvements.</Text>
+          </div>
 
-      <div className={s.hero}>
-        <div className={s.heroTop}>
-          <div>
-            <Text className={s.heroTitle}>Shape Builder</Text>
-            <Text className={s.heroSub}>Excel Add-in</Text>
-          </div>
-          <div className={s.heroBtns}>
-            {!isPopout ? (
-              <button className={s.heroBtn} type="button" onClick={() => void openFormatEditorPopout()}>
-                Pop Out
-              </button>
-            ) : null}
-            <button className={s.heroBtn} type="button" onClick={onOpenLegacy}>
-              Legacy
+          <div className={s.workspaceActionBar}>
+            <Button size="small" appearance="secondary" onClick={() => openLayoutSection("gridFreeze")}>
+              Gridlines and Freeze
+            </Button>
+            <button className={s.addBtn} type="button" onClick={() => { openLayoutSection("sheetPresentation"); void addShape(); }} disabled={busy}>
+              <Add20Regular /> Add Shape
             </button>
+            <Button size="small" icon={<ArrowClockwise20Regular />} onClick={() => void refreshAll()} disabled={busy}>
+              Refresh
+            </Button>
+            {!isPopout ? (
+              <Button size="small" onClick={() => void openFormatEditorPopout()}>
+                Pop Out
+              </Button>
+            ) : null}
+            <Button size="small" onClick={onOpenLegacy}>
+              Legacy
+            </Button>
+            <Text className={s.workspaceActionHint}>
+              {status || "Sheet tools ready."}
+            </Text>
           </div>
-        </div>
-        <div>
-          <button className={s.addBtn} type="button" onClick={() => void addShape()} disabled={busy}>
-            <Add20Regular /> Add Shape
+        </>
+      ) : null}
+
+      <div className={s.sectionStack}>
+        <div className={s.sectionCard}>
+          <button
+            className={s.sectionHeaderBtn}
+            type="button"
+            onClick={() => toggleLayoutSection("gridFreeze")}
+            aria-expanded={expandedSections.includes("gridFreeze")}
+          >
+            <span className={s.sectionHeaderMain}>
+              <Grid20Regular />
+              <span className={s.sectionTitle}>Gridlines and Freeze Panes</span>
+            </span>
+            <span className={s.sectionMeta}>
+              <span className={s.sectionChip}>Active</span>
+              {expandedSections.includes("gridFreeze") ? <ChevronUp20Regular /> : <ChevronDown20Regular />}
+            </span>
           </button>
+          {expandedSections.includes("gridFreeze") ? <div className={s.sectionBody}>{formattingUtilitiesCard}</div> : null}
         </div>
-        <div className={s.row}>
-          <Text className={`${s.status} ${statusType === "error" ? s.error : s.ok}`}>{status || "Ready."}</Text>
-          <Button size="small" icon={<ArrowClockwise20Regular />} onClick={() => void refreshAll()} disabled={busy}>
-            Refresh
-          </Button>
-        </div>
-      </div>
+
+        <div className={s.sectionCard}>
+          <button
+            className={s.sectionHeaderBtn}
+            type="button"
+            onClick={() => toggleLayoutSection("sheetPresentation")}
+            aria-expanded={expandedSections.includes("sheetPresentation")}
+          >
+            <span className={s.sectionHeaderMain}>
+              <Emoji20Regular />
+              <span className={s.sectionTitle}>Sheet Presentation</span>
+            </span>
+            <span className={s.sectionMeta}>
+              <span className={s.sectionCount}>{isShapeListFiltered ? `${filteredShapes.length}/${shapes.length}` : `${shapes.length}`}</span>
+              {expandedSections.includes("sheetPresentation") ? <ChevronUp20Regular /> : <ChevronDown20Regular />}
+            </span>
+          </button>
+          {expandedSections.includes("sheetPresentation") ? (
+            <div className={s.sectionBody}>
+              <div className={s.card}>
+                <div className={s.row}>
+                  <Text className={s.title}>Shape Builder</Text>
+                  <Text className={`${s.status} ${statusType === "error" ? s.error : s.ok}`}>{status || "Ready."}</Text>
+                </div>
+              </div>
 
       <div className={s.card}>
         <div className={s.row}>
@@ -1326,6 +1464,12 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
             <Text className={s.muted}>
               {isShapeListFiltered ? `${filteredShapes.length} of ${shapes.length}` : `${shapes.length}`} on active sheet
             </Text>
+            <button className={s.smallBtn} type="button" onClick={() => void addShape()} disabled={busy}>
+              Add Shape
+            </button>
+            <button className={s.smallBtn} type="button" onClick={() => void refreshAll()} disabled={busy}>
+              Refresh
+            </button>
             {!isPopout ? (
               <button className={s.smallBtn} type="button" onClick={() => void openFormatEditorPopout()}>
                 Pop Out
@@ -1959,8 +2103,29 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
           </>
         )}
       </div>
+            </div>
+          ) : null}
+        </div>
 
-      <div className={s.card}>
+        <div className={s.sectionCard}>
+          <button
+            className={s.sectionHeaderBtn}
+            type="button"
+            onClick={() => toggleLayoutSection("quickFormatting")}
+            aria-expanded={expandedSections.includes("quickFormatting")}
+          >
+            <span className={s.sectionHeaderMain}>
+              <TextAlignCenter20Regular />
+              <span className={s.sectionTitle}>Quick Formatting Tools</span>
+            </span>
+            <span className={s.sectionMeta}>
+              <span className={s.sectionCount}>{formats.length}</span>
+              {expandedSections.includes("quickFormatting") ? <ChevronUp20Regular /> : <ChevronDown20Regular />}
+            </span>
+          </button>
+          {expandedSections.includes("quickFormatting") ? (
+            <div className={s.sectionBody}>
+              <div className={s.card}>
         <div className={s.sectionHeader}>
           <div className={s.sectionTitleWrap}>
             <Text className={s.title}>Template Quick Start</Text>
@@ -2085,7 +2250,10 @@ const FormatView: React.FC<FormatViewProps> = ({ onOpenLegacy, isPopout = false 
           </div>
         ))}
       </div>
-
+            </div>
+          ) : null}
+        </div>
+      </div>
     </div>
   );
 };

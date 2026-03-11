@@ -10,6 +10,7 @@ type CaseTransform = "none" | "camelCase" | "snake_case" | "SCREAMING_SNAKE_CASE
 
 interface TablesViewProps {
   onOpenLegacy: () => void;
+  embedded?: boolean;
 }
 
 interface BulkState {
@@ -95,7 +96,7 @@ const applyCase = (value: string, mode: CaseTransform): string => {
   return parts.map((p) => p.toUpperCase()).join("_");
 };
 
-const TablesView: React.FC<TablesViewProps> = ({ onOpenLegacy }) => {
+const TablesView: React.FC<TablesViewProps> = ({ onOpenLegacy, embedded = false }) => {
   const shared = useModernSharedStyles();
   const styles = useStyles();
   const [rows, setRows] = useState<TableRecord[]>([]);
@@ -205,10 +206,12 @@ const TablesView: React.FC<TablesViewProps> = ({ onOpenLegacy }) => {
 
   return (
     <div className={styles.root}>
-      <div>
-        <Text className={shared.sectionTitle}>Tables</Text>
-        <Text className={shared.sectionSubtitle}>Manage workbook tables and naming conventions.</Text>
-      </div>
+      {!embedded ? (
+        <div>
+          <Text className={shared.sectionTitle}>Tables</Text>
+          <Text className={shared.sectionSubtitle}>Manage workbook tables and naming conventions.</Text>
+        </div>
+      ) : null}
 
       <div className={shared.card}>
         <div className={styles.toolbar}>
@@ -360,4 +363,3 @@ const TablesView: React.FC<TablesViewProps> = ({ onOpenLegacy }) => {
 };
 
 export default TablesView;
-

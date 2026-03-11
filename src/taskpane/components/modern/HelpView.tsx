@@ -5,6 +5,7 @@ import { useModernSharedStyles } from "./designTokens";
 
 interface HelpViewProps {
   onNavigate: (target: NavigationTarget) => void;
+  embedded?: boolean;
 }
 
 const useStyles = makeStyles({
@@ -22,16 +23,18 @@ const useStyles = makeStyles({
   },
 });
 
-const HelpView: React.FC<HelpViewProps> = ({ onNavigate }) => {
+const HelpView: React.FC<HelpViewProps> = ({ onNavigate, embedded = false }) => {
   const shared = useModernSharedStyles();
   const styles = useStyles();
 
   return (
     <div className={styles.root}>
-      <div>
-        <Text className={shared.sectionTitle}>Help</Text>
-        <Text className={shared.sectionSubtitle}>Quick guidance for the modern Workbook Manager experience.</Text>
-      </div>
+      {!embedded ? (
+        <div>
+          <Text className={shared.sectionTitle}>Help</Text>
+          <Text className={shared.sectionSubtitle}>Quick guidance for the modern Workbook Manager experience.</Text>
+        </div>
+      ) : null}
 
       <div className={shared.card}>
         <Text className={shared.cardTitle}>Getting Started</Text>
@@ -89,4 +92,3 @@ const HelpView: React.FC<HelpViewProps> = ({ onNavigate }) => {
 };
 
 export default HelpView;
-

@@ -8,6 +8,7 @@ import { MODERN_TOKENS, useModernSharedStyles } from "./designTokens";
 
 interface QueriesViewProps {
   onOpenLegacy: () => void;
+  embedded?: boolean;
 }
 
 const useStyles = makeStyles({
@@ -52,7 +53,7 @@ const isQueryApiSupported = (): boolean => {
   }
 };
 
-const QueriesView: React.FC<QueriesViewProps> = ({ onOpenLegacy }) => {
+const QueriesView: React.FC<QueriesViewProps> = ({ onOpenLegacy, embedded = false }) => {
   const shared = useModernSharedStyles();
   const styles = useStyles();
   const [queries, setQueries] = useState<WorkbookQueryRecord[]>([]);
@@ -104,10 +105,12 @@ const QueriesView: React.FC<QueriesViewProps> = ({ onOpenLegacy }) => {
 
   return (
     <div className={styles.root}>
-      <div>
-        <Text className={shared.sectionTitle}>Queries</Text>
-        <Text className={shared.sectionSubtitle}>List and refresh workbook Power Query metadata where supported.</Text>
-      </div>
+      {!embedded ? (
+        <div>
+          <Text className={shared.sectionTitle}>Queries</Text>
+          <Text className={shared.sectionSubtitle}>List and refresh workbook Power Query metadata where supported.</Text>
+        </div>
+      ) : null}
 
       <div className={shared.card}>
         <div className={styles.toolbar}>

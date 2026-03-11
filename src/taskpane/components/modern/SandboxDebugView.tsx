@@ -13,6 +13,7 @@ import { useModernSharedStyles } from "./designTokens";
 
 interface SandboxDebugViewProps {
   onOpenLegacy: () => void;
+  embedded?: boolean;
 }
 
 const TABLE_STYLES = ["TableStyleMedium2", "TableStyleMedium9", "TableStyleLight11"];
@@ -22,7 +23,7 @@ const useStyles = makeStyles({
   actions: { display: "flex", flexWrap: "wrap", gap: "8px" },
 });
 
-const SandboxDebugView: React.FC<SandboxDebugViewProps> = ({ onOpenLegacy }) => {
+const SandboxDebugView: React.FC<SandboxDebugViewProps> = ({ onOpenLegacy, embedded = false }) => {
   const shared = useModernSharedStyles();
   const styles = useStyles();
   const [status, setStatus] = useState<string>("");
@@ -44,10 +45,12 @@ const SandboxDebugView: React.FC<SandboxDebugViewProps> = ({ onOpenLegacy }) => 
 
   return (
     <div className={styles.root}>
-      <div>
-        <Text className={shared.sectionTitle}>Sandbox Debug</Text>
-        <Text className={shared.sectionSubtitle}>Relocated quick actions for diagnostics and utility workflows.</Text>
-      </div>
+      {!embedded ? (
+        <div>
+          <Text className={shared.sectionTitle}>Sandbox Debug</Text>
+          <Text className={shared.sectionSubtitle}>Relocated quick actions for diagnostics and utility workflows.</Text>
+        </div>
+      ) : null}
 
       <div className={shared.card}>
         <Text className={shared.cardTitle}>Quick Actions</Text>
@@ -100,4 +103,3 @@ const SandboxDebugView: React.FC<SandboxDebugViewProps> = ({ onOpenLegacy }) => 
 };
 
 export default SandboxDebugView;
-
