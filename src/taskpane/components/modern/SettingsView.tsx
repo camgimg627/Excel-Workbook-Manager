@@ -5,6 +5,7 @@ import { useModernSharedStyles } from "./designTokens";
 interface SettingsViewProps {
   onOpenLegacy: () => void;
   onResetUiPreference: () => void;
+  embedded?: boolean;
 }
 
 const useStyles = makeStyles({
@@ -25,16 +26,18 @@ const useStyles = makeStyles({
   },
 });
 
-const SettingsView: React.FC<SettingsViewProps> = ({ onOpenLegacy, onResetUiPreference }) => {
+const SettingsView: React.FC<SettingsViewProps> = ({ onOpenLegacy, onResetUiPreference, embedded = false }) => {
   const shared = useModernSharedStyles();
   const styles = useStyles();
 
   return (
     <div className={styles.root}>
-      <div>
-        <Text className={shared.sectionTitle}>Settings</Text>
-        <Text className={shared.sectionSubtitle}>Configure migration and UI behavior controls.</Text>
-      </div>
+      {!embedded ? (
+        <div>
+          <Text className={shared.sectionTitle}>Settings</Text>
+          <Text className={shared.sectionSubtitle}>Configure migration and UI behavior controls.</Text>
+        </div>
+      ) : null}
 
       <div className={shared.card}>
         <Text className={shared.cardTitle}>Migration Controls</Text>
@@ -76,4 +79,3 @@ const SettingsView: React.FC<SettingsViewProps> = ({ onOpenLegacy, onResetUiPref
 };
 
 export default SettingsView;
-

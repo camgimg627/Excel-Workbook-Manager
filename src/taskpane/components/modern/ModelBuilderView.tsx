@@ -11,6 +11,7 @@ import { MODERN_TOKENS, useModernSharedStyles } from "./designTokens";
 
 interface ModelBuilderViewProps {
   onOpenLegacy: () => void;
+  embedded?: boolean;
 }
 
 interface ParameterRowState extends ModelBuilderParameterInput {
@@ -77,7 +78,7 @@ const buildRow = (): ParameterRowState => ({
   listValues: "",
 });
 
-const ModelBuilderView: React.FC<ModelBuilderViewProps> = ({ onOpenLegacy }) => {
+const ModelBuilderView: React.FC<ModelBuilderViewProps> = ({ onOpenLegacy, embedded = false }) => {
   const shared = useModernSharedStyles();
   const styles = useStyles();
   const [rows, setRows] = useState<ParameterRowState[]>([buildRow()]);
@@ -166,12 +167,14 @@ const ModelBuilderView: React.FC<ModelBuilderViewProps> = ({ onOpenLegacy }) => 
 
   return (
     <div className={styles.root}>
-      <div>
-        <Text className={shared.sectionTitle}>Model Builder</Text>
-        <Text className={shared.sectionSubtitle}>
-          Build worksheet parameters with named value cells and list-based data validation.
-        </Text>
-      </div>
+      {!embedded ? (
+        <div>
+          <Text className={shared.sectionTitle}>Model Builder</Text>
+          <Text className={shared.sectionSubtitle}>
+            Build worksheet parameters with named value cells and list-based data validation.
+          </Text>
+        </div>
+      ) : null}
 
       <div className={shared.card}>
         <div className={styles.toolbar}>

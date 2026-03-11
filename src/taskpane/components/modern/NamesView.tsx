@@ -23,6 +23,7 @@ type CreateEntryType = "Range" | "Function" | "List";
 interface NamesViewProps {
   createRequestId: number;
   onOpenLegacy: () => void;
+  embedded?: boolean;
 }
 
 interface EditState {
@@ -72,6 +73,30 @@ interface BulkState {
   deleteName: boolean;
   deleteValues: boolean;
 }
+
+const isInternalWorkbookSheetName = (sheetName: string): boolean => {
+  const normalized = sheetName.trim();
+  if (!normalized) {
+    return false;
+  }
+  if (normalized === "__WBM_SHEET_FORMATS" || normalized === "__WBM_META" || normalized === "__WBM_FUNCTION_EVAL") {
+    return true;
+  }
+  return normalized.startsWith("__WBM_FMT_");
+};
+
+const buildDefaultCreateState = (): CreateState => ({
+  open: false,
+  createType: "Range",
+  scopeType: "Workbook",
+  scope: "",
+  name: "",
+  address: "",
+  lambdaArgs: "",
+  functionBody: "",
+  listValues: "",
+  fallbackSheet: "",
+});
 
 const RANGE_COLUMNS: SortColumn[] = ["name", "address", "sheet", "scope", "type"];
 const ADDRESS_COLUMN_MIN_WIDTH = 220;
@@ -408,7 +433,7 @@ const buildNamedListFormula = (listInput: string): string => {
   return `={${literals.join(";")}}`;
 };
 
-const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy }) => {
+const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy, embedded = false }) => {
   const shared = useModernSharedStyles();
   const styles = useStyles();
   const [rows, setRows] = useState<NamedRangeRecord[]>([]);
@@ -437,16 +462,7 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy }) 
     caseTransform: "none",
   });
   const [createState, setCreateState] = useState<CreateState>({
-    open: false,
-    createType: "Range",
-    scopeType: "Workbook",
-    scope: "",
-    name: "",
-    address: "",
-    lambdaArgs: "",
-    functionBody: "",
-    listValues: "",
-    fallbackSheet: "",
+    ...buildDefaultCreateState(),
   });
   const [moveState, setMoveState] = useState<MoveState>({
     open: false,
@@ -470,6 +486,28 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy }) 
     deleteValues: false,
   });
 
+  const openCreateDialog = async () => {
+    let selectionSheet = "";
+    try {
+      const selection = await getCurrentSelectionAddress();
+      if (!isInternalWorkbookSheetName(selection.sheet)) {
+        selectionSheet = selection.sheet;
+      }
+    } catch {
+      // best effort only
+    }
+    setCreateState({
+      ...buildDefaultCreateState(),
+      open: true,
+      fallbackSheet: selectionSheet,
+      scope: selectionSheet,
+    });
+  };
+
+  const closeCreateDialog = () => {
+    setCreateState(buildDefaultCreateState());
+  };
+
   const load = async () => {
     setLoading(true);
     try {
@@ -492,7 +530,7 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy }) 
 
   useEffect(() => {
     if (createRequestId > 0) {
-      setCreateState((prev) => ({ ...prev, open: true }));
+      void openCreateDialog();
     }
   }, [createRequestId]);
 
@@ -612,6 +650,11 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy }) 
   ) => {
     try {
       const selection = await getCurrentSelectionAddress();
+      if (isInternalWorkbookSheetName(selection.sheet)) {
+        setStatusType("error");
+        setStatus("Select a cell on a workbook sheet before capturing selection.");
+        return;
+      }
       setter(selection);
       setStatusType("success");
       setStatus("Current selection captured.");
@@ -651,11 +694,26 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy }) 
 
     let definition = createState.address.trim();
     let referenceType: "Reference" | "Formula" = "Reference";
+    let effectiveFallbackSheet = createState.fallbackSheet.trim();
 
     if (createState.createType === "Range") {
       if (!definition) {
         setStatusType("error");
         setStatus("Address is required for range names.");
+        return;
+      }
+      if (!definition.includes("!") && !effectiveFallbackSheet) {
+        try {
+          const selection = await getCurrentSelectionAddress();
+          effectiveFallbackSheet = selection.sheet;
+          setCreateState((prev) => ({ ...prev, fallbackSheet: prev.fallbackSheet || selection.sheet }));
+        } catch {
+          // continue with explicit validation below
+        }
+      }
+      if (!definition.includes("!") && !effectiveFallbackSheet) {
+        setStatusType("error");
+        setStatus("Use a qualified reference (for example, Sheet1!A1) or capture a selection first.");
         return;
       }
     }
@@ -686,24 +744,29 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy }) 
       async () => {
         const scope =
           createState.scopeType === "Worksheet"
-            ? createState.scope.trim() || createState.fallbackSheet
+            ? createState.scope.trim() || effectiveFallbackSheet
             : createState.scope.trim();
+        if (createState.scopeType === "Worksheet" && isInternalWorkbookSheetName(scope)) {
+          throw new Error("Choose a workbook worksheet scope (internal __WBM sheets are not allowed).");
+        }
+        if (
+          createState.createType === "Range" &&
+          !definition.includes("!") &&
+          isInternalWorkbookSheetName(effectiveFallbackSheet)
+        ) {
+          throw new Error("Use a workbook sheet selection or a qualified reference like Sheet1!A1.");
+        }
         await addNamedRange(
           createState.scopeType,
           scope,
           name,
           definition,
-          createState.fallbackSheet,
+          effectiveFallbackSheet,
           referenceType
         );
         setCreateState((prev) => ({
           ...prev,
-          open: false,
-          name: "",
-          address: "",
-          lambdaArgs: "",
-          functionBody: "",
-          listValues: "",
+          ...buildDefaultCreateState(),
         }));
       },
       `${createState.createType} name created.`,
@@ -878,15 +941,17 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy }) 
 
   return (
     <div className={styles.root}>
-      <div>
-        <Text className={shared.sectionTitle}>Names</Text>
-        <Text className={shared.sectionSubtitle}>Manage named ranges, lists, functions, and workbook objects.</Text>
-      </div>
+      {!embedded ? (
+        <div>
+          <Text className={shared.sectionTitle}>Names</Text>
+          <Text className={shared.sectionSubtitle}>Manage named ranges, lists, functions, and workbook objects.</Text>
+        </div>
+      ) : null}
 
       <div className={shared.card}>
         <div className={styles.toolbar}>
           <div className={styles.toolbarPrimary}>
-            <Button appearance="primary" onClick={() => setCreateState((prev) => ({ ...prev, open: true }))}>
+            <Button appearance="primary" onClick={() => void openCreateDialog()}>
               + Create Name
             </Button>
             <Button onClick={() => setBulkState((prev) => ({ ...prev, open: true }))} disabled={selectedIds.size === 0}>
@@ -1210,7 +1275,7 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy }) 
                         ...p,
                         address: selection.address,
                         fallbackSheet: selection.sheet,
-                        scope: selection.sheet,
+                        scope: p.scopeType === "Worksheet" ? selection.sheet : p.scope,
                       }))
                     )
                   }
@@ -1218,7 +1283,7 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy }) 
                   Use Selection
                 </Button>
               ) : null}
-              <Button onClick={() => setCreateState((p) => ({ ...p, open: false }))}>Cancel</Button>
+              <Button onClick={closeCreateDialog}>Cancel</Button>
               <Button appearance="primary" disabled={submitting} onClick={() => void submitCreate()}>
                 Create
               </Button>

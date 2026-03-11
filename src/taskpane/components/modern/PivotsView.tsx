@@ -6,6 +6,7 @@ import { useModernSharedStyles } from "./designTokens";
 
 interface PivotsViewProps {
   onOpenLegacy: () => void;
+  embedded?: boolean;
 }
 
 const useStyles = makeStyles({
@@ -20,7 +21,7 @@ const useStyles = makeStyles({
   },
 });
 
-const PivotsView: React.FC<PivotsViewProps> = ({ onOpenLegacy }) => {
+const PivotsView: React.FC<PivotsViewProps> = ({ onOpenLegacy, embedded = false }) => {
   const shared = useModernSharedStyles();
   const styles = useStyles();
   const [status, setStatus] = useState<string>("");
@@ -40,10 +41,12 @@ const PivotsView: React.FC<PivotsViewProps> = ({ onOpenLegacy }) => {
 
   return (
     <div className={styles.root}>
-      <div>
-        <Text className={shared.sectionTitle}>Pivots</Text>
-        <Text className={shared.sectionSubtitle}>Refresh pivot table calculations on the active worksheet.</Text>
-      </div>
+      {!embedded ? (
+        <div>
+          <Text className={shared.sectionTitle}>Pivots</Text>
+          <Text className={shared.sectionSubtitle}>Refresh pivot table calculations on the active worksheet.</Text>
+        </div>
+      ) : null}
 
       <div className={shared.card}>
         <Text className={shared.cardTitle}>Pivot Table Actions</Text>
@@ -66,4 +69,3 @@ const PivotsView: React.FC<PivotsViewProps> = ({ onOpenLegacy }) => {
 };
 
 export default PivotsView;
-

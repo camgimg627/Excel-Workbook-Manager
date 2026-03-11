@@ -114,6 +114,7 @@ const FUNCTION_SUGGESTIONS = [
 interface FormulaMonacoViewProps {
   isPopout: boolean;
   onOpenLegacy: () => void;
+  embedded?: boolean;
 }
 
 export interface FormulaViewHandle {
@@ -123,6 +124,7 @@ export interface FormulaViewHandle {
   apply: () => Promise<void>;
   beautify: () => Promise<void>;
   insertSelection: () => Promise<void>;
+  getCurrentFormula: () => string;
 }
 
 interface ActiveCellState {
@@ -720,7 +722,7 @@ const collectLetLambdaLocals = (text: string, cursorOffset: number): string[] =>
 };
 
 const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewProps>(
-  ({ isPopout, onOpenLegacy }, ref) => {
+  ({ isPopout, onOpenLegacy, embedded = false }, ref) => {
     const shared = useModernSharedStyles();
     const styles = useStyles();
     const [formulaText, setFormulaText] = useState<string>("");
@@ -1626,6 +1628,7 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
       insertSelection: async () => {
         await runAction("Insert grid selection", insertSelection);
       },
+      getCurrentFormula: () => (editorRef.current?.getValue() ?? formulaText).trim(),
     }));
 
     const editorLineHeight = 20;
@@ -1638,7 +1641,7 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
 
     return (
       <div className={styles.root}>
-        {!isPopout ? (
+        {!isPopout && !embedded ? (
           <div>
             <Text className={shared.sectionTitle}>Formulas</Text>
             <Text className={shared.sectionSubtitle}>Manage and edit workbook formulas with live test output.</Text>
