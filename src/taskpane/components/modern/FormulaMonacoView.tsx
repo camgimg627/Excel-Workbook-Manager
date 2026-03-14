@@ -286,6 +286,12 @@ const useStyles = makeStyles({
     lineHeight: "1.6",
 <<<<<<< ours
 <<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
 >>>>>>> theirs
 =======
 >>>>>>> theirs
@@ -1733,12 +1739,18 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
 <<<<<<< ours
 <<<<<<< ours
 <<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
     const editorLineHeight = 23;
     const defaultVisibleLines = isPopout ? 18 : 14;
     const editorVerticalChrome = isPopout ? 164 : 146;
     const compactEditorHeight = editorLineHeight * defaultVisibleLines + editorVerticalChrome;
     const expandedEditorHeight = compactEditorHeight + (isPopout ? 244 : 204);
 =======
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
 =======
 >>>>>>> theirs
 =======
@@ -1751,6 +1763,12 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
     const expandedEditorHeight = compactEditorHeight + (isPopout ? 320 : 280);
 <<<<<<< ours
 <<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
 >>>>>>> theirs
 =======
 >>>>>>> theirs
@@ -2084,7 +2102,13 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
 <<<<<<< ours
 <<<<<<< ours
 <<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
                           fontFamily: "Consolas, 'Cascadia Mono', 'Courier New', monospace",
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
 =======
 >>>>>>> theirs
 =======

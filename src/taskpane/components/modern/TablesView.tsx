@@ -5,6 +5,8 @@ import {
 <<<<<<< ours
 <<<<<<< ours
 <<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
   addNamedRange,
   getNamedRanges,
   getTableColumns,
@@ -18,6 +20,10 @@ import {
 >>>>>>> theirs
 =======
 >>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
   CreateNamedRangesFromTableRequest,
   TableRecord,
   createNamedRangesFromTableColumns,
@@ -26,6 +32,12 @@ import {
   selectTableAddress,
 <<<<<<< ours
 <<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
 >>>>>>> theirs
 =======
 >>>>>>> theirs
@@ -54,6 +66,8 @@ interface BulkState {
   caseTransform: CaseTransform;
 }
 
+<<<<<<< ours
+<<<<<<< ours
 <<<<<<< ours
 <<<<<<< ours
 <<<<<<< ours
@@ -96,6 +110,10 @@ const buildCreateRangesState = (): CreateRangesState => ({
 >>>>>>> theirs
 =======
 >>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
 interface TableRangeModalState {
   open: boolean;
   table: TableRecord | null;
@@ -108,6 +126,12 @@ interface TableRangeModalState {
 
 <<<<<<< ours
 <<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
 >>>>>>> theirs
 =======
 >>>>>>> theirs
@@ -168,6 +192,8 @@ const useStyles = makeStyles({
 <<<<<<< ours
 <<<<<<< ours
 <<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
   selectedRow: {
     backgroundColor: "#EAF3FF",
   },
@@ -204,10 +230,22 @@ const useStyles = makeStyles({
   cell: { padding: "10px 8px", borderBottom: `1px solid ${MODERN_TOKENS.colorBorder}`, whiteSpace: "nowrap" },
   clickableCellBtn: {
 >>>>>>> theirs
+=======
+  selectedRow: { backgroundColor: "#EAF2FF" },
+  cell: { padding: "10px 8px", borderBottom: `1px solid ${MODERN_TOKENS.colorBorder}`, whiteSpace: "nowrap" },
+  clickableCellBtn: {
+>>>>>>> theirs
+=======
+  selectedRow: { backgroundColor: "#EAF2FF" },
+  cell: { padding: "10px 8px", borderBottom: `1px solid ${MODERN_TOKENS.colorBorder}`, whiteSpace: "nowrap" },
+  clickableCellBtn: {
+>>>>>>> theirs
     border: "none",
     background: "transparent",
     color: MODERN_TOKENS.colorBrandStrong,
     cursor: "pointer",
+<<<<<<< ours
+<<<<<<< ours
 <<<<<<< ours
 <<<<<<< ours
 <<<<<<< ours
@@ -269,6 +307,10 @@ const useStyles = makeStyles({
 >>>>>>> theirs
 =======
 >>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
     padding: 0,
     textDecorationLine: "underline",
     fontSize: "12px",
@@ -289,9 +331,17 @@ const useStyles = makeStyles({
 <<<<<<< ours
 <<<<<<< ours
 <<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
     width: "min(760px, 100%)",
     maxHeight: "90vh",
     overflow: "auto",
+=======
+    width: "min(720px, 100%)",
+>>>>>>> theirs
+=======
+    width: "min(720px, 100%)",
+>>>>>>> theirs
 =======
     width: "min(720px, 100%)",
 >>>>>>> theirs
@@ -312,6 +362,8 @@ const useStyles = makeStyles({
     overflow: "auto",
 <<<<<<< ours
 <<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
   },
   modalGrid: {
     display: "grid",
@@ -320,6 +372,10 @@ const useStyles = makeStyles({
     "@media (max-width: 720px)": {
       gridTemplateColumns: "minmax(0, 1fr)",
     },
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
 =======
 >>>>>>> theirs
 =======
@@ -435,6 +491,12 @@ const useStyles = makeStyles({
     fontSize: "11px",
 <<<<<<< ours
 <<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
 >>>>>>> theirs
 =======
 >>>>>>> theirs
@@ -704,6 +766,126 @@ const TablesView: React.FC<TablesViewProps> = ({ onOpenLegacy, embedded = false 
     } catch (error) {
       setStatusType("error");
       setStatus(`Rename failed: ${err(error)}`);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const openCreateRangesModal = async () => {
+    const table = rows.find((row) => selectedIds.has(row.id));
+    if (!table) {
+      setStatusType("error");
+      setStatus("Select one table first.");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const columns = await getTableColumns(table.sheet, table.name);
+      setRangesFromTable({
+        open: true,
+        table,
+        columns,
+        selectedColumns: new Set(columns.map((item) => item.name)),
+        scopeType: "Worksheet",
+        conflictMode: "prefix",
+        conflictValue: "nr_",
+      });
+    } catch (error) {
+      setStatusType("error");
+      setStatus(`Unable to load table columns: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const applyCreateRangesFromTable = async () => {
+    if (!rangesFromTable.table) return;
+    const selectedColumns = Array.from(rangesFromTable.selectedColumns);
+    if (selectedColumns.length === 0) {
+      setStatusType("error");
+      setStatus("Select at least one table column.");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const result = await createNamedRangesFromTableColumns({
+        sheetName: rangesFromTable.table.sheet,
+        tableName: rangesFromTable.table.name,
+        columns: selectedColumns,
+        scopeType: rangesFromTable.scopeType,
+        conflictMode: rangesFromTable.conflictMode,
+        conflictValue: rangesFromTable.conflictValue,
+      });
+      setRangesFromTable((prev) => ({ ...prev, open: false }));
+      setStatusType("success");
+      setStatus(
+        `Created ${result.created.length} named range(s)` +
+          (result.skipped.length ? `, skipped ${result.skipped.length}.` : ".")
+      );
+    } catch (error) {
+      setStatusType("error");
+      setStatus(`Create from table failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const openCreateRangesModal = async () => {
+    const table = rows.find((row) => selectedIds.has(row.id));
+    if (!table) {
+      setStatusType("error");
+      setStatus("Select one table first.");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const columns = await getTableColumns(table.sheet, table.name);
+      setRangesFromTable({
+        open: true,
+        table,
+        columns,
+        selectedColumns: new Set(columns.map((item) => item.name)),
+        scopeType: "Worksheet",
+        conflictMode: "prefix",
+        conflictValue: "nr_",
+      });
+    } catch (error) {
+      setStatusType("error");
+      setStatus(`Unable to load table columns: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const applyCreateRangesFromTable = async () => {
+    if (!rangesFromTable.table) return;
+    const selectedColumns = Array.from(rangesFromTable.selectedColumns);
+    if (selectedColumns.length === 0) {
+      setStatusType("error");
+      setStatus("Select at least one table column.");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const result = await createNamedRangesFromTableColumns({
+        sheetName: rangesFromTable.table.sheet,
+        tableName: rangesFromTable.table.name,
+        columns: selectedColumns,
+        scopeType: rangesFromTable.scopeType,
+        conflictMode: rangesFromTable.conflictMode,
+        conflictValue: rangesFromTable.conflictValue,
+      });
+      setRangesFromTable((prev) => ({ ...prev, open: false }));
+      setStatusType("success");
+      setStatus(
+        `Created ${result.created.length} named range(s)` +
+          (result.skipped.length ? `, skipped ${result.skipped.length}.` : ".")
+      );
+    } catch (error) {
+      setStatusType("error");
+      setStatus(`Create from table failed: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setSubmitting(false);
     }
@@ -1408,6 +1590,41 @@ const TablesView: React.FC<TablesViewProps> = ({ onOpenLegacy, embedded = false 
               </div>
             </div>
 
+<<<<<<< ours
+=======
+      {rangesFromTable.open ? (
+        <div className={styles.modalBackdrop}>
+          <div className={styles.modal}>
+            <Text className={shared.cardTitle}>Create New Ranges from Table</Text>
+            <Text className={shared.mutedText}>
+              Table: {rangesFromTable.table?.name} ({rangesFromTable.table?.sheet})
+            </Text>
+
+            <div>
+              <Text className={shared.mutedText}>Columns</Text>
+              <div className={styles.columnList}>
+                {rangesFromTable.columns.map((column) => (
+                  <label key={column.id} className={styles.columnRow}>
+                    <input
+                      type="checkbox"
+                      checked={rangesFromTable.selectedColumns.has(column.name)}
+                      onChange={() =>
+                        setRangesFromTable((prev) => {
+                          const next = new Set(prev.selectedColumns);
+                          if (next.has(column.name)) next.delete(column.name);
+                          else next.add(column.name);
+                          return { ...prev, selectedColumns: next };
+                        })
+                      }
+                    />
+                    <span>{column.name}</span>
+                    <span className={styles.mutedCode}>{column.address}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+>>>>>>> theirs
             <div className={styles.modalGrid}>
               <div>
                 <Text className={shared.mutedText}>Scope</Text>
@@ -1464,10 +1681,102 @@ const TablesView: React.FC<TablesViewProps> = ({ onOpenLegacy, embedded = false 
 
 <<<<<<< ours
 <<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
 >>>>>>> theirs
 =======
 >>>>>>> theirs
 =======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+      {rangesFromTable.open ? (
+        <div className={styles.modalBackdrop}>
+          <div className={styles.modal}>
+            <Text className={shared.cardTitle}>Create New Ranges from Table</Text>
+            <Text className={shared.mutedText}>
+              Table: {rangesFromTable.table?.name} ({rangesFromTable.table?.sheet})
+            </Text>
+
+            <div>
+              <Text className={shared.mutedText}>Columns</Text>
+              <div className={styles.columnList}>
+                {rangesFromTable.columns.map((column) => (
+                  <label key={column.id} className={styles.columnRow}>
+                    <input
+                      type="checkbox"
+                      checked={rangesFromTable.selectedColumns.has(column.name)}
+                      onChange={() =>
+                        setRangesFromTable((prev) => {
+                          const next = new Set(prev.selectedColumns);
+                          if (next.has(column.name)) next.delete(column.name);
+                          else next.add(column.name);
+                          return { ...prev, selectedColumns: next };
+                        })
+                      }
+                    />
+                    <span>{column.name}</span>
+                    <span className={styles.mutedCode}>{column.address}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div className={styles.modalGrid}>
+              <div>
+                <Text className={shared.mutedText}>Scope</Text>
+                <Select
+                  value={rangesFromTable.scopeType}
+                  onChange={(_, data) =>
+                    setRangesFromTable((prev) => ({ ...prev, scopeType: data.value as "Workbook" | "Worksheet" }))
+                  }
+                >
+                  <option value="Worksheet">Worksheet</option>
+                  <option value="Workbook">Workbook</option>
+                </Select>
+              </div>
+              <div>
+                <Text className={shared.mutedText}>Conflict Handling</Text>
+                <Select
+                  value={rangesFromTable.conflictMode}
+                  onChange={(_, data) =>
+                    setRangesFromTable((prev) => ({
+                      ...prev,
+                      conflictMode: data.value as CreateNamedRangesFromTableRequest["conflictMode"],
+                    }))
+                  }
+                >
+                  <option value="prefix">Add prefix</option>
+                  <option value="suffix">Add suffix</option>
+                  <option value="rename">Replace with explicit name</option>
+                </Select>
+              </div>
+              <div className={styles.full}>
+                <Text className={shared.mutedText}>
+                  {rangesFromTable.conflictMode === "prefix"
+                    ? "Prefix"
+                    : rangesFromTable.conflictMode === "suffix"
+                      ? "Suffix"
+                      : "Replacement Name"}
+                </Text>
+                <Input
+                  value={rangesFromTable.conflictValue}
+                  onChange={(_, data) => setRangesFromTable((prev) => ({ ...prev, conflictValue: data.value }))}
+                />
+              </div>
+            </div>
+
+            <div className={styles.modalActions}>
+              <Button onClick={() => setRangesFromTable((prev) => ({ ...prev, open: false }))}>Cancel</Button>
+              <Button appearance="primary" onClick={() => void applyCreateRangesFromTable()} disabled={submitting}>
+                Create
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
 >>>>>>> theirs
       {bulkState.open ? (
         <div className={styles.modalBackdrop}>

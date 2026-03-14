@@ -34,11 +34,17 @@ export interface TableColumnRecord {
 <<<<<<< ours
 <<<<<<< ours
 <<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
   tableName: string;
   name: string;
   address: string;
   sheet: string;
 =======
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
 =======
 >>>>>>> theirs
 =======
@@ -56,6 +62,12 @@ export interface CreateNamedRangesFromTableRequest {
   conflictValue: string;
 <<<<<<< ours
 <<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
 >>>>>>> theirs
 =======
 >>>>>>> theirs
