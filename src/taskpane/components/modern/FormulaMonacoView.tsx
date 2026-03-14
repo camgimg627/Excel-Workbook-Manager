@@ -1,7 +1,13 @@
 import * as React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Input, Select, Text, makeStyles } from "@fluentui/react-components";
+import {
+  ArrowExpand20Regular,
+  ArrowMinimizeVertical20Regular,
+  Open20Regular,
+} from "@fluentui/react-icons";
 import Editor, { OnMount, loader } from "@monaco-editor/react";
+import { ArrowExpand20Regular } from "@fluentui/react-icons";
 import type * as Monaco from "monaco-editor";
 import {
   FormulaEvaluationResult,
@@ -57,6 +63,8 @@ interface DialogOpenFormulaMessage {
   wizardArgs?: string;
   wizardReturnExpression?: string;
   wizardVariables?: Array<{ name: string; expression: string }>;
+  activeSubTab?: FormulaSubTab;
+  lambdaTestInputs?: string[];
 }
 
 let monacoLoaderConfigured = false;
@@ -115,6 +123,7 @@ interface FormulaMonacoViewProps {
   isPopout: boolean;
   onOpenLegacy: () => void;
   embedded?: boolean;
+  onFormulaChange?: (formula: string) => void;
 }
 
 export interface FormulaViewHandle {
@@ -152,34 +161,46 @@ const useStyles = makeStyles({
     border: `1px solid ${MODERN_TOKENS.colorBorder}`,
     backgroundColor: "#fff",
     boxShadow: MODERN_TOKENS.shadowCard,
-    padding: "16px",
+    padding: "14px",
     display: "grid",
     gap: "12px",
   },
   editorShell: {
-    position: "relative",
+    display: "grid",
+    gap: "12px",
   },
-  overlayTop: {
-    position: "absolute",
-    top: "8px",
-    right: "8px",
-    zIndex: 6,
+  editorWorkspaceHeader: {
+    display: "grid",
+    gap: "10px",
+    gridTemplateColumns: "minmax(0, 1fr) auto",
+    alignItems: "start",
+    "@media (max-width: 780px)": {
+      gridTemplateColumns: "minmax(0, 1fr)",
+    },
+  },
+  editorWorkspaceMeta: {
+    display: "grid",
+    gap: "4px",
+    minWidth: 0,
+  },
+  editorWorkspaceTitle: {
+    fontSize: "13px",
+    lineHeight: "18px",
+    fontWeight: 700,
+    color: MODERN_TOKENS.colorText,
+  },
+  editorWorkspaceHint: {
+    fontSize: "12px",
+    lineHeight: "17px",
+    color: MODERN_TOKENS.colorTextMuted,
+  },
+  editorHeaderActions: {
     display: "flex",
     gap: "6px",
     flexWrap: "wrap",
     justifyContent: "flex-end",
-  },
-  overlayBottom: {
-    position: "absolute",
-    left: "8px",
-    right: "8px",
-    bottom: "8px",
-    zIndex: 6,
-    display: "grid",
-    gap: "8px",
-    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
     "@media (max-width: 780px)": {
-      gridTemplateColumns: "minmax(0, 1fr)",
+      justifyContent: "flex-start",
     },
   },
   overlayCluster: {
@@ -229,32 +250,49 @@ const useStyles = makeStyles({
     boxShadow: "0 1px 2px rgba(17,24,39,0.08)",
   },
   editorWrap: {
-    borderRadius: "8px",
-    border: `1px solid ${MODERN_TOKENS.colorBorder}`,
+    borderRadius: "10px",
+    border: "1px solid #C8D2E1",
     overflow: "hidden",
-    minHeight: "220px",
+    minHeight: "320px",
     backgroundColor: "#fff",
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.75)",
   },
   editorLoading: {
-    minHeight: "220px",
+    minHeight: "320px",
     display: "grid",
     alignItems: "center",
     justifyItems: "center",
-    backgroundColor: "#fff",
+    backgroundColor: "#F8FBFF",
   },
+  editorHeightCompact: { height: "468px" },
+  editorHeightExpanded: { height: "672px" },
+  editorHeightPopoutCompact: { height: "578px" },
+  editorHeightPopoutExpanded: { height: "822px" },
   fallbackEditor: {
     width: "100%",
-    minHeight: "220px",
+    minHeight: "320px",
     border: "none",
     outline: "none",
     resize: "vertical",
-    padding: "42px 12px 128px",
+    padding: "18px 18px 26px",
     boxSizing: "border-box",
+<<<<<<< ours
+    fontFamily: "Consolas, 'Cascadia Mono', 'Courier New', monospace",
+    fontSize: "14px",
+    lineHeight: "1.7",
+=======
     fontFamily: "Consolas, 'Courier New', monospace",
-    fontSize: "13px",
-    lineHeight: "1.4",
+    fontSize: "14px",
+    lineHeight: "1.6",
+<<<<<<< ours
+<<<<<<< ours
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
     color: MODERN_TOKENS.colorText,
-    backgroundColor: "#fff",
+    backgroundColor: "#FDFEFF",
   },
   liveTestHeader: {
     display: "flex",
@@ -272,7 +310,17 @@ const useStyles = makeStyles({
   },
   outputTable: { width: "100%", borderCollapse: "collapse", fontSize: "12px" },
   outputCell: { borderBottom: `1px solid ${MODERN_TOKENS.colorBorder}`, padding: "8px 10px" },
+  popoutLiveOutputPanel: {
+    borderTop: `1px solid ${MODERN_TOKENS.colorBorder}`,
+    paddingTop: "12px",
+    display: "grid",
+    gap: "8px",
+  },
   autoCaptureRow: {
+    display: "grid",
+    gap: "6px",
+  },
+  contextTopRow: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
@@ -286,6 +334,12 @@ const useStyles = makeStyles({
     color: MODERN_TOKENS.colorTextMuted,
     fontSize: "12px",
   },
+  contextHint: {
+    fontSize: "11px",
+    lineHeight: "15px",
+    color: MODERN_TOKENS.colorTextMuted,
+  },
+  connectedText: { color: MODERN_TOKENS.colorBrandStrong, fontWeight: 700 },
   modeRow: {
     display: "flex",
     alignItems: "center",
@@ -317,20 +371,16 @@ const useStyles = makeStyles({
     borderRadius: "8px",
     border: `1px solid ${MODERN_TOKENS.colorBorder}`,
     backgroundColor: "#FFFFFF",
-    padding: "10px 12px",
+    padding: "12px 14px",
     display: "grid",
-    gap: "10px",
+    gap: "12px",
   },
   actionDock: {
-    position: "sticky",
-    bottom: 0,
-    zIndex: 7,
-    marginTop: "8px",
     borderRadius: "8px",
     border: `1px solid ${MODERN_TOKENS.colorBorder}`,
-    backgroundColor: "rgba(255,255,255,0.96)",
+    backgroundColor: "#F8FAFC",
     boxShadow: MODERN_TOKENS.shadowCard,
-    padding: "8px",
+    padding: "10px",
     display: "grid",
     gap: "8px",
   },
@@ -722,7 +772,7 @@ const collectLetLambdaLocals = (text: string, cursorOffset: number): string[] =>
 };
 
 const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewProps>(
-  ({ isPopout, onOpenLegacy, embedded = false }, ref) => {
+  ({ isPopout, onOpenLegacy, embedded = false, onFormulaChange }, ref) => {
     const shared = useModernSharedStyles();
     const styles = useStyles();
     const [formulaText, setFormulaText] = useState<string>("");
@@ -730,7 +780,7 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
     const [statusType, setStatusType] = useState<"success" | "error">("success");
     const [activeCell, setActiveCell] = useState<ActiveCellState | null>(null);
     const [formulaOutput, setFormulaOutput] = useState<FormulaEvaluationResult | null>(null);
-    const [autoCapture, setAutoCapture] = useState<boolean>(true);
+    const [autoCapture, setAutoCapture] = useState<boolean>(false);
     const [loadingMetadata, setLoadingMetadata] = useState<boolean>(false);
     const [editorReady, setEditorReady] = useState<boolean>(false);
     const [editorLoadError, setEditorLoadError] = useState<string>("");
@@ -762,7 +812,14 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
     const namesRef = useRef<string[]>([]);
     const tablesRef = useRef<string[]>([]);
     const pendingEvalRequestsRef = useRef<
-      Map<string, { resolve: (result: FormulaEvaluationResult) => void; reject: (error: Error) => void; timeoutId: number }>
+      Map<
+        string,
+        {
+          resolve: (result: FormulaEvaluationResult) => void;
+          reject: (error: Error) => void;
+          timeoutId: number;
+        }
+      >
     >(new Map());
     const lastSyncedFormulaRef = useRef<string>("");
     const suppressAutoCaptureUntilRef = useRef<number>(0);
@@ -782,7 +839,10 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
         return { formula: "", error: "Enter a formula in the editor first." };
       }
       try {
-        return { formula: buildNamedFunctionFormula(current, stringifyArgs(effectiveNamedFunctionArgs)), error: "" };
+        return {
+          formula: buildNamedFunctionFormula(current, stringifyArgs(effectiveNamedFunctionArgs)),
+          error: "",
+        };
       } catch (error) {
         return { formula: "", error: normalizeError(error) };
       }
@@ -843,10 +903,17 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
       if (creationMode === "Function") {
         tabs.push({ key: "metadata", label: "Function Metadata" });
       }
-      if (creationMode === "Function" && !(authoringMode === "Wizard" && wizardTemplate === "LET")) {
+      if (
+        creationMode === "Function" &&
+        !(authoringMode === "Wizard" && wizardTemplate === "LET")
+      ) {
         tabs.push({ key: "lambda-test", label: "Lambda Test" });
       }
-      tabs.push(authoringMode === "Editor" ? { key: "editor", label: "Editor" } : { key: "wizard", label: "Wizard" });
+      tabs.push(
+        authoringMode === "Editor"
+          ? { key: "editor", label: "Editor" }
+          : { key: "wizard", label: "Wizard" }
+      );
       tabs.push({ key: "live-output", label: "Live Output" });
       return tabs;
     }, [authoringMode, creationMode, wizardTemplate]);
@@ -920,58 +987,43 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
       });
     }, []);
 
-    const pullFromActiveCell = useCallback(
-      async (requireFormula: boolean) => {
-        const state = await getActiveCellFormulaState();
-        setActiveCell(state);
-        if (!state.hasFormula) {
-          if (requireFormula) {
-            throw new Error(`Cell ${state.sheet}!${state.address} does not contain a formula.`);
-          }
-          return false;
+    const refreshActiveCellContext = useCallback(async () => {
+      const state = await getActiveCellFormulaState();
+      setActiveCell(state);
+      return state;
+    }, []);
+
+    const pullFromActiveCell = useCallback(async (requireFormula: boolean) => {
+      const state = await refreshActiveCellContext();
+      if (!state.hasFormula) {
+        if (requireFormula) {
+          throw new Error(`Cell ${state.sheet}!${state.address} does not contain a formula.`);
         }
-        setFormulaText(state.formula);
-        lastSyncedFormulaRef.current = state.formula;
-        return true;
-      },
-      []
-    );
+        return false;
+      }
+      setFormulaText(state.formula);
+      lastSyncedFormulaRef.current = state.formula;
+      return true;
+    }, [refreshActiveCellContext]);
 
     const applyToActiveCell = useCallback(async () => {
       const normalized = (editorRef.current?.getValue() ?? formulaText).trim();
       if (!normalized) {
         throw new Error("Formula editor is empty.");
       }
-      const argsForApply = stringifyArgs(mergeArgsWithDraft(namedFunctionArgs, namedFunctionArgDraft));
+      const argsForApply = stringifyArgs(
+        mergeArgsWithDraft(namedFunctionArgs, namedFunctionArgDraft)
+      );
       const formulaToApply =
-        creationMode === "Function" ? buildNamedFunctionFormula(normalized, argsForApply) : normalized;
+        creationMode === "Function"
+          ? buildNamedFunctionFormula(normalized, argsForApply)
+          : normalized;
       await applyFormulaToActiveCell(formulaToApply);
       const refreshed = await getActiveCellFormulaState();
       setActiveCell(refreshed);
       lastSyncedFormulaRef.current = refreshed.formula;
       setFormulaText(refreshed.formula);
     }, [creationMode, formulaText, namedFunctionArgDraft, namedFunctionArgs]);
-
-    const autoPullOnEditorBlur = useCallback(async () => {
-      const currentEditorValue = (editorRef.current?.getValue() ?? formulaText).trim();
-      if (currentEditorValue !== lastSyncedFormulaRef.current.trim()) {
-        setStatusType("success");
-        setStatus("Auto-pull skipped to preserve unsaved editor changes.");
-        return;
-      }
-      const state = await getActiveCellFormulaState();
-      setActiveCell(state);
-      if (!state.hasFormula) {
-        return;
-      }
-      if (state.formula.trim() === currentEditorValue) {
-        return;
-      }
-      setFormulaText(state.formula);
-      lastSyncedFormulaRef.current = state.formula;
-      setStatusType("success");
-      setStatus(`Auto-pulled ${state.sheet}!${state.address} after editor blur.`);
-    }, [formulaText]);
 
     const insertSelection = useCallback(async () => {
       const selection = await getCurrentSelectionAddress();
@@ -1018,6 +1070,10 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
     }, [loadSuggestions]);
 
     useEffect(() => {
+      void refreshActiveCellContext().catch(() => undefined);
+    }, [refreshActiveCellContext]);
+
+    useEffect(() => {
       if (!autoCapture) return undefined;
       let disposed = false;
       let busy = false;
@@ -1044,7 +1100,7 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
             if (Date.now() < suppressAutoCaptureUntilRef.current) {
               return;
             }
-            const editorFocused = editorRef.current?.hasTextFocus() ?? false;
+            const editorFocused = editorRef.current?.hasTextFocus() ?? editorHasFocus;
             if (!editorFocused && state.formula !== formulaText) {
               setFormulaText(state.formula);
               lastSyncedFormulaRef.current = state.formula;
@@ -1061,7 +1117,11 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
         disposed = true;
         window.clearInterval(timerId);
       };
-    }, [autoCapture, formulaText]);
+    }, [autoCapture, editorHasFocus, formulaText]);
+
+    useEffect(() => {
+      onFormulaChange?.(formulaText);
+    }, [formulaText, onFormulaChange]);
 
     useEffect(() => {
       if (!isPopout || typeof Office === "undefined") {
@@ -1099,7 +1159,9 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
           if (!incomingFormula) {
             return;
           }
-          const normalizedFormula = incomingFormula.startsWith("=") ? incomingFormula : `=${incomingFormula}`;
+          const normalizedFormula = incomingFormula.startsWith("=")
+            ? incomingFormula
+            : `=${incomingFormula}`;
           setFormulaText(normalizedFormula);
           lastSyncedFormulaRef.current = normalizedFormula;
           suppressAutoCaptureUntilRef.current = Date.now() + 1800;
@@ -1140,6 +1202,14 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
               setWizardVariables(mapped);
             }
           }
+          if (data.activeSubTab) {
+            setActiveSubTab(data.activeSubTab);
+          }
+          if (Array.isArray(data.lambdaTestInputs)) {
+            setLambdaTestInputs(
+              data.lambdaTestInputs.filter((item): item is string => typeof item === "string")
+            );
+          }
           if (data.entryType === "Function") {
             setCreationMode("Function");
             const extractedArgs = extractLambdaArgsFromFormula(normalizedFormula);
@@ -1174,7 +1244,9 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
           return;
         }
 
-        pending.reject(new Error(typeof data.error === "string" ? data.error : "Live test failed."));
+        pending.reject(
+          new Error(typeof data.error === "string" ? data.error : "Live test failed.")
+        );
       };
 
       Office.context.ui.addHandlerAsync(Office.EventType.DialogParentMessageReceived, handler);
@@ -1419,10 +1491,9 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
         });
         editor.onDidBlurEditorText(() => {
           setEditorHasFocus(false);
-          void autoPullOnEditorBlur();
         });
       },
-      [autoPullOnEditorBlur]
+      []
     );
 
     useEffect(() => {
@@ -1454,16 +1525,19 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
       setNamedFunctionDescription("");
     }, []);
 
-    const buildSaveFailureMessage = (
-      error: unknown,
-      functionName: string
-    ): string => {
+    const buildSaveFailureMessage = (error: unknown, functionName: string): string => {
       const source = normalizeError(error);
       const tips: string[] = [];
-      if (!EXCEL_NAME_PATTERN.test(functionName) || CELL_REFERENCE_LIKE_PATTERN.test(functionName)) {
+      if (
+        !EXCEL_NAME_PATTERN.test(functionName) ||
+        CELL_REFERENCE_LIKE_PATTERN.test(functionName)
+      ) {
         tips.push("Use a valid Excel name (starts with letter/_ and cannot look like A1).");
       }
-      if (namedFunctionArgPreview.length > 0 && namedFunctionArgPreview.some((arg) => !LAMBDA_IDENTIFIER_PATTERN.test(arg))) {
+      if (
+        namedFunctionArgPreview.length > 0 &&
+        namedFunctionArgPreview.some((arg) => !LAMBDA_IDENTIFIER_PATTERN.test(arg))
+      ) {
         tips.push("Each argument must be a valid identifier (letters/numbers/_/./\\).");
       }
       if (/argument is invalid|incorrect format/i.test(source)) {
@@ -1481,18 +1555,29 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
         if (!functionName) {
           throw new Error("Function name is required.");
         }
-        if (!EXCEL_NAME_PATTERN.test(functionName) || CELL_REFERENCE_LIKE_PATTERN.test(functionName)) {
-          throw new Error("Function name must be a valid Excel defined name and cannot look like a cell reference.");
+        if (
+          !EXCEL_NAME_PATTERN.test(functionName) ||
+          CELL_REFERENCE_LIKE_PATTERN.test(functionName)
+        ) {
+          throw new Error(
+            "Function name must be a valid Excel defined name and cannot look like a cell reference."
+          );
         }
-        const argsForSave = stringifyArgs(mergeArgsWithDraft(namedFunctionArgs, namedFunctionArgDraft));
+        const argsForSave = stringifyArgs(
+          mergeArgsWithDraft(namedFunctionArgs, namedFunctionArgDraft)
+        );
         setNamedFunctionArgs(argsForSave);
         setNamedFunctionArgDraft("");
         const lambdaFormula = buildNamedFunctionFormula(current, argsForSave);
         await saveNamedFunction(functionName, lambdaFormula);
         await loadSuggestions();
-        const saved = namesRef.current.some((item) => item.toUpperCase() === functionName.toUpperCase());
+        const saved = namesRef.current.some(
+          (item) => item.toUpperCase() === functionName.toUpperCase()
+        );
         if (!saved) {
-          throw new Error("Save request completed, but the function is not visible yet. Refresh and try again.");
+          throw new Error(
+            "Save request completed, but the function is not visible yet. Refresh and try again."
+          );
         }
         setStatusType("success");
         setStatus(`Function "${functionName}" saved.`);
@@ -1505,7 +1590,9 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
 
     const openPopoutWithCurrentState = async () => {
       const currentFormula = (editorRef.current?.getValue() ?? formulaText).trim();
-      const argsForPopout = stringifyArgs(mergeArgsWithDraft(namedFunctionArgs, namedFunctionArgDraft));
+      const argsForPopout = stringifyArgs(
+        mergeArgsWithDraft(namedFunctionArgs, namedFunctionArgDraft)
+      );
       setNamedFunctionArgs(argsForPopout);
       setNamedFunctionArgDraft("");
       await openFormulaEditorPopout({
@@ -1523,13 +1610,19 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
           name: item.name,
           expression: item.expression,
         })),
+        activeSubTab: activeSubTab ?? "editor",
+        lambdaTestInputs,
       });
     };
 
     const addWizardVariable = () => {
       setWizardVariables((prev) => [
         ...prev,
-        { id: `var-${Date.now().toString()}-${Math.random().toString(16).slice(2)}`, name: "", expression: "" },
+        {
+          id: `var-${Date.now().toString()}-${Math.random().toString(16).slice(2)}`,
+          name: "",
+          expression: "",
+        },
       ]);
     };
 
@@ -1584,7 +1677,9 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
         if (result.hasError) {
           const errorText = getFirstErrorCell(result);
           setLiveTestError(`Lambda test returned ${errorText}.`);
-          throw new Error(`Lambda invocation returned ${errorText}. Check arguments and LET/LAMBDA structure.`);
+          throw new Error(
+            `Lambda invocation returned ${errorText}. Check arguments and LET/LAMBDA structure.`
+          );
         }
         setLiveTestError("");
       });
@@ -1596,7 +1691,11 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
         commitNamedFunctionArgDraft();
         return;
       }
-      if (event.key === "Backspace" && !namedFunctionArgDraft.trim() && namedFunctionArgPreview.length > 0) {
+      if (
+        event.key === "Backspace" &&
+        !namedFunctionArgDraft.trim() &&
+        namedFunctionArgPreview.length > 0
+      ) {
         event.preventDefault();
         removeNamedFunctionArgAt(namedFunctionArgPreview.length - 1);
       }
@@ -1631,35 +1730,122 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
       getCurrentFormula: () => (editorRef.current?.getValue() ?? formulaText).trim(),
     }));
 
-    const editorLineHeight = 20;
-    const defaultVisibleLines = 10;
-    const editorVerticalChrome = 176;
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+    const editorLineHeight = 23;
+    const defaultVisibleLines = isPopout ? 18 : 14;
+    const editorVerticalChrome = isPopout ? 164 : 146;
+    const compactEditorHeight = editorLineHeight * defaultVisibleLines + editorVerticalChrome;
+    const expandedEditorHeight = compactEditorHeight + (isPopout ? 244 : 204);
+=======
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+    const editorLineHeight = 22;
+    const defaultVisibleLines = 14;
+    const editorVerticalChrome = 190;
     const compactEditorHeight =
       editorLineHeight * defaultVisibleLines + editorVerticalChrome + (isPopout ? 80 : 0);
-    const expandedEditorHeight = compactEditorHeight + (isPopout ? 220 : 180);
+    const expandedEditorHeight = compactEditorHeight + (isPopout ? 320 : 280);
+<<<<<<< ours
+<<<<<<< ours
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
     const editorHeight = `${isEditorExpanded ? expandedEditorHeight : compactEditorHeight}px`;
+    const editorHeightClass = isPopout
+      ? isEditorExpanded
+        ? styles.editorHeightPopoutExpanded
+        : styles.editorHeightPopoutCompact
+      : isEditorExpanded
+        ? styles.editorHeightExpanded
+        : styles.editorHeightCompact;
+
+    const renderLiveOutputPanel = (title: string) => (
+      <>
+        <div className={styles.liveTestHeader}>
+          <Text className={shared.cardTitle}>{title}</Text>
+          <Text className={shared.mutedText}>
+            {liveTestBusy
+              ? "Testing..."
+              : liveTestError
+                ? `Last test failed${lastTestedAt ? ` at ${lastTestedAt}` : ""}`
+                : lastTestedAt
+                  ? `Auto-tested at ${lastTestedAt}`
+                  : "Waiting for formula input"}
+          </Text>
+        </div>
+
+        {lastTestInvocation ? (
+          <Text className={styles.invocationText}>Invocation: {lastTestInvocation}</Text>
+        ) : null}
+        {liveTestError ? <Text className={shared.errorText}>{liveTestError}</Text> : null}
+
+        <div className={styles.outputWrap}>
+          {formulaOutput ? (
+            <table className={styles.outputTable}>
+              <tbody>
+                {formulaOutput.values.map((row, rowIndex) => (
+                  <tr key={rowIndex}>
+                    {row.map((cell, colIndex) => (
+                      <td key={`${rowIndex}-${colIndex}`} className={styles.outputCell}>
+                        {cell === null ? "" : String(cell)}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <div className={styles.outputCell}>
+              <Text className={shared.mutedText}>
+                Live test will render results here as you edit.
+              </Text>
+            </div>
+          )}
+        </div>
+      </>
+    );
 
     return (
       <div className={styles.root}>
         {!isPopout && !embedded ? (
           <div>
             <Text className={shared.sectionTitle}>Formulas</Text>
-            <Text className={shared.sectionSubtitle}>Manage and edit workbook formulas with live test output.</Text>
+            <Text className={shared.sectionSubtitle}>
+              Manage and edit workbook formulas with live test output.
+            </Text>
           </div>
         ) : null}
 
         <div className={styles.card}>
           <div className={styles.autoCaptureRow}>
-            <Text className={shared.mutedText}>
-              Active Cell: {activeCell ? `${activeCell.sheet}!${activeCell.address}` : "not captured"}
-              {" • "}
-              <span style={{ color: MODERN_TOKENS.colorBrandStrong, fontWeight: 700 }}>Connected</span>
-              {loadingMetadata ? " • loading suggestions..." : ""}
+            <div className={styles.contextTopRow}>
+              <Text className={shared.mutedText}>
+                Active Cell:{" "}
+                {activeCell ? `${activeCell.sheet}!${activeCell.address}` : "not captured"}
+                {" • "}
+                <span className={styles.connectedText}>Connected</span>
+                {loadingMetadata ? " • loading suggestions..." : ""}
+              </Text>
+              <label className={styles.checkboxLabel}>
+                <input
+                  type="checkbox"
+                  aria-label="Live sync editor with active cell"
+                  checked={autoCapture}
+                  onChange={(event) => setAutoCapture(event.target.checked)}
+                />{" "}
+                Live sync active cell
+              </label>
+            </div>
+            <Text className={styles.contextHint}>
+              Use current sheet selection directly in the editor. Live sync stays off by default so
+              typing in the editor is preserved unless you explicitly enable it.
             </Text>
-            <label className={styles.checkboxLabel}>
-              <input type="checkbox" checked={autoCapture} onChange={(event) => setAutoCapture(event.target.checked)} />{" "}
-              Auto-capture active formula
-            </label>
           </div>
 
           <div className={styles.modeRow}>
@@ -1786,7 +1972,11 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
                     </Text>
                   )}
                   <div className={styles.actionRow}>
-                    <Button appearance="primary" size="small" onClick={() => void runLambdaInputTest()}>
+                    <Button
+                      appearance="primary"
+                      size="small"
+                      onClick={() => void runLambdaInputTest()}
+                    >
                       Run Lambda Test
                     </Button>
                   </div>
@@ -1795,6 +1985,17 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
 
               {activeSubTab === "editor" && authoringMode === "Editor" ? (
                 <div className={styles.editorShell}>
+<<<<<<< ours
+                  <div className={styles.editorWorkspaceHeader}>
+                    <div className={styles.editorWorkspaceMeta}>
+                      <Text className={styles.editorWorkspaceTitle}>Formula Workspace</Text>
+                      <Text className={styles.editorWorkspaceHint}>
+                        Pull from the active cell when needed, or drop the current sheet selection
+                        into the formula without leaving the editor.
+                      </Text>
+                    </div>
+                    <div className={styles.editorHeaderActions}>
+=======
                   <div className={styles.overlayTop}>
                     <Button size="small" onClick={() => void runAction("Beautify formula", beautify)}>
                       Beautify
@@ -1802,39 +2003,71 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
                     <Button size="small" onClick={() => void runAction("Insert selection", insertSelection)}>
                       Insert Selection
                     </Button>
-                    <Button size="small" onClick={() => setIsEditorExpanded((prev) => !prev)}>
-                      {isEditorExpanded ? "Use Smaller Editor" : "Expand Editor"}
+                    <Button
+                      size="small"
+                      icon={<ArrowExpand20Regular />}
+                      title={isEditorExpanded ? "Use smaller editor" : "Expand editor workspace"}
+                      onClick={() => setIsEditorExpanded((prev) => !prev)}
+                    >
+                      {isEditorExpanded ? "Collapse" : "Expand"}
                     </Button>
                     {!isPopout ? (
+>>>>>>> theirs
                       <Button
                         size="small"
-                        onClick={() => void runAction("Open formula editor popout", openPopoutWithCurrentState)}
+                        onClick={() => void runAction("Beautify formula", beautify)}
                       >
-                        Open Pop-out
+                        Beautify
                       </Button>
-                    ) : null}
-                    {!isPopout ? (
-                      <Button size="small" onClick={onOpenLegacy}>
-                        Legacy View
+                      <Button
+                        size="small"
+                        onClick={() => void runAction("Use current selection", insertSelection)}
+                      >
+                        Use Current Selection
                       </Button>
-                    ) : null}
+                      <Button
+                        size="small"
+                        icon={
+                          isEditorExpanded ? (
+                            <ArrowMinimizeVertical20Regular />
+                          ) : (
+                            <ArrowExpand20Regular />
+                          )
+                        }
+                        onClick={() => setIsEditorExpanded((prev) => !prev)}
+                      >
+                        {isEditorExpanded ? "Compact" : "Expand"}
+                      </Button>
+                      {!isPopout ? (
+                        <Button
+                          size="small"
+                          icon={<Open20Regular />}
+                          onClick={() =>
+                            void runAction("Open formula editor popout", openPopoutWithCurrentState)
+                          }
+                        >
+                          Pop Out
+                        </Button>
+                      ) : null}
+                      {!isPopout ? (
+                        <Button size="small" onClick={onOpenLegacy}>
+                          Legacy View
+                        </Button>
+                      ) : null}
+                    </div>
                   </div>
 
                   <div className={styles.editorWrap}>
                     {editorLoadError ? (
                       <textarea
                         aria-label="Formula editor fallback"
-                        className={styles.fallbackEditor}
+                        className={`${styles.fallbackEditor} ${editorHeightClass}`}
                         spellCheck={false}
-                        rows={10}
-                        style={{ height: editorHeight }}
+                        rows={16}
                         value={formulaText}
                         onChange={(event) => setFormulaText(event.target.value)}
                         onFocus={() => setEditorHasFocus(true)}
-                        onBlur={() => {
-                          setEditorHasFocus(false);
-                          void autoPullOnEditorBlur();
-                        }}
+                        onBlur={() => setEditorHasFocus(false)}
                       />
                     ) : editorReady ? (
                       <Editor
@@ -1847,18 +2080,28 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
                         options={{
                           minimap: { enabled: false },
                           scrollBeyondLastLine: false,
-                          fontSize: 13,
+                          fontSize: 14,
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+                          fontFamily: "Consolas, 'Cascadia Mono', 'Courier New', monospace",
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
                           lineHeight: editorLineHeight,
                           lineNumbers: "on",
-                          wordWrap: "off",
+                          wordWrap: "on",
                           automaticLayout: true,
                           suggestOnTriggerCharacters: true,
                           quickSuggestions: { other: true, comments: false, strings: false },
                           wordBasedSuggestions: "off",
                           tabCompletion: "on",
                           padding: {
-                            top: 38,
-                            bottom: 128,
+                            top: 16,
+                            bottom: 24,
                           },
                           suggest: {
                             showWords: false,
@@ -1868,35 +2111,33 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
                         }}
                       />
                     ) : (
-                      <div className={styles.editorLoading} style={{ height: editorHeight }}>
+                      <div className={`${styles.editorLoading} ${editorHeightClass}`}>
                         <Text className={shared.mutedText}>Loading formula editor...</Text>
                       </div>
                     )}
                   </div>
 
-                  {!editorHasFocus ? (
-                    <div className={styles.actionDock}>
-                      <Text className={styles.overlayTitle}>Apply / Save</Text>
-                      <div className={styles.actionRow}>
-                        <Button
-                          appearance="primary"
-                          size="small"
-                          onClick={() => void runAction("Apply formula", applyToActiveCell)}
-                        >
-                          Apply Formula
+                  <div className={styles.actionDock}>
+                    <Text className={styles.overlayTitle}>Apply / Save</Text>
+                    <div className={styles.actionRow}>
+                      <Button
+                        appearance="primary"
+                        size="small"
+                        onClick={() => void runAction("Apply formula", applyToActiveCell)}
+                      >
+                        Apply Formula
+                      </Button>
+                      {creationMode === "Function" ? (
+                        <Button size="small" onClick={() => void saveCurrentAsNamedFunction()}>
+                          Save Function
                         </Button>
-                        {creationMode === "Function" ? (
-                          <Button size="small" onClick={() => void saveCurrentAsNamedFunction()}>
-                            Save Function
-                          </Button>
-                        ) : (
-                          <Button size="small" onClick={() => setShowSaveFunctionModal(true)}>
-                            Save Named Function
-                          </Button>
-                        )}
-                      </div>
+                      ) : (
+                        <Button size="small" onClick={() => setShowSaveFunctionModal(true)}>
+                          Save Named Function
+                        </Button>
+                      )}
                     </div>
-                  ) : null}
+                  </div>
                 </div>
               ) : null}
 
@@ -1939,7 +2180,9 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
                       <Input
                         placeholder="expression/value"
                         value={item.expression}
-                        onChange={(_, data) => updateWizardVariable(item.id, "expression", data.value)}
+                        onChange={(_, data) =>
+                          updateWizardVariable(item.id, "expression", data.value)
+                        }
                       />
                       <Button size="small" onClick={() => removeWizardVariable(item.id)}>
                         Remove
@@ -1973,48 +2216,11 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
                 </>
               ) : null}
 
-              {activeSubTab === "live-output" ? (
-                <>
-                  <div className={styles.liveTestHeader}>
-                    <Text className={shared.cardTitle}>Live Test Output</Text>
-                    <Text className={shared.mutedText}>
-                      {liveTestBusy
-                        ? "Testing..."
-                        : liveTestError
-                          ? `Last test failed${lastTestedAt ? ` at ${lastTestedAt}` : ""}`
-                          : lastTestedAt
-                            ? `Auto-tested at ${lastTestedAt}`
-                            : "Waiting for formula input"}
-                    </Text>
-                  </div>
-
-                  {lastTestInvocation ? (
-                    <Text className={styles.invocationText}>Invocation: {lastTestInvocation}</Text>
-                  ) : null}
-                  {liveTestError ? <Text className={shared.errorText}>{liveTestError}</Text> : null}
-
-                  <div className={styles.outputWrap}>
-                    {formulaOutput ? (
-                      <table className={styles.outputTable}>
-                        <tbody>
-                          {formulaOutput.values.map((row, rowIndex) => (
-                            <tr key={rowIndex}>
-                              {row.map((cell, colIndex) => (
-                                <td key={`${rowIndex}-${colIndex}`} className={styles.outputCell}>
-                                  {cell === null ? "" : String(cell)}
-                                </td>
-                              ))}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    ) : (
-                      <div className={styles.outputCell}>
-                        <Text className={shared.mutedText}>Live test will render results here as you edit.</Text>
-                      </div>
-                    )}
-                  </div>
-                </>
+              {activeSubTab === "live-output" ? renderLiveOutputPanel("Live Test Output") : null}
+              {isPopout && activeSubTab !== "live-output" ? (
+                <div className={styles.popoutLiveOutputPanel}>
+                  {renderLiveOutputPanel("Active Output")}
+                </div>
               ) : null}
             </div>
           ) : null}
@@ -2027,8 +2233,8 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
             <div className={styles.modal}>
               <Text className={shared.cardTitle}>Save As Named Function</Text>
               <Text className={shared.cardSubtitle}>
-                Add function metadata and arguments. If the editor formula is not already a LAMBDA expression, it will
-                be wrapped automatically.
+                Add function metadata and arguments. If the editor formula is not already a LAMBDA
+                expression, it will be wrapped automatically.
               </Text>
               <div className={styles.modalField}>
                 <Text className={styles.modalLabel}>Function name</Text>
@@ -2045,7 +2251,9 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
                   value={namedFunctionDescription}
                   onChange={(_, data) => setNamedFunctionDescription(data.value)}
                 />
-                <Text className={shared.mutedText}>Descriptions are not persisted by Excel named formulas.</Text>
+                <Text className={shared.mutedText}>
+                  Descriptions are not persisted by Excel named formulas.
+                </Text>
               </div>
               <div className={styles.modalField}>
                 <Text className={styles.modalLabel}>Arguments (comma-separated)</Text>
@@ -2063,7 +2271,9 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
                     ))}
                   </div>
                 ) : (
-                  <Text className={shared.mutedText}>No arguments set. The editor formula will be used as LAMBDA body.</Text>
+                  <Text className={shared.mutedText}>
+                    No arguments set. The editor formula will be used as LAMBDA body.
+                  </Text>
                 )}
               </div>
               <div className={styles.modalField}>

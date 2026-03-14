@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Input, Select, Text, makeStyles } from "@fluentui/react-components";
 import {
   NamedRangeRecord,
@@ -24,6 +24,7 @@ interface NamesViewProps {
   createRequestId: number;
   onOpenLegacy: () => void;
   embedded?: boolean;
+  onOpenShape?: (request: { sheetName: string; shapeName: string }) => void;
 }
 
 interface EditState {
@@ -79,7 +80,11 @@ const isInternalWorkbookSheetName = (sheetName: string): boolean => {
   if (!normalized) {
     return false;
   }
-  if (normalized === "__WBM_SHEET_FORMATS" || normalized === "__WBM_META" || normalized === "__WBM_FUNCTION_EVAL") {
+  if (
+    normalized === "__WBM_SHEET_FORMATS" ||
+    normalized === "__WBM_META" ||
+    normalized === "__WBM_FUNCTION_EVAL"
+  ) {
     return true;
   }
   return normalized.startsWith("__WBM_FMT_");
@@ -106,7 +111,13 @@ const useStyles = makeStyles({
   root: { display: "grid", gap: "24px" },
   toolbar: { display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" },
   toolbarPrimary: { display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" },
-  toolbarFilters: { display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap", marginLeft: "auto" },
+  toolbarFilters: {
+    display: "flex",
+    gap: "8px",
+    alignItems: "center",
+    flexWrap: "wrap",
+    marginLeft: "auto",
+  },
   spacer: { flexGrow: 1 },
   tableWrap: {
     border: `1px solid ${MODERN_TOKENS.colorBorder}`,
@@ -131,7 +142,13 @@ const useStyles = makeStyles({
     padding: "10px 8px",
     whiteSpace: "nowrap",
   },
-  sortBtn: { border: "none", background: "transparent", fontWeight: 600, cursor: "pointer", padding: 0 },
+  sortBtn: {
+    border: "none",
+    background: "transparent",
+    fontWeight: 600,
+    cursor: "pointer",
+    padding: 0,
+  },
   row: {
     selectors: {
       "&:nth-child(even)": { backgroundColor: "#FCFCFD" },
@@ -139,7 +156,11 @@ const useStyles = makeStyles({
       "&:hover .row-actions": { opacity: 1, pointerEvents: "auto" },
     },
   },
-  cell: { padding: "10px 8px", borderBottom: `1px solid ${MODERN_TOKENS.colorBorder}`, whiteSpace: "nowrap" },
+  cell: {
+    padding: "10px 8px",
+    borderBottom: `1px solid ${MODERN_TOKENS.colorBorder}`,
+    whiteSpace: "nowrap",
+  },
   rowActions: {
     display: "flex",
     gap: "4px",
@@ -164,7 +185,6 @@ const useStyles = makeStyles({
   },
   typeFilterWrap: { position: "relative" },
   typeFilterSummary: {
-    listStyleType: "none",
     border: `1px solid ${MODERN_TOKENS.colorBorder}`,
     borderRadius: "6px",
     height: "32px",
@@ -174,10 +194,20 @@ const useStyles = makeStyles({
     cursor: "pointer",
     userSelect: "none",
     backgroundColor: "#fff",
+    color: MODERN_TOKENS.colorText,
+    fontSize: "12px",
+    fontWeight: 400,
+    textAlign: "left",
     selectors: {
-      "&::-webkit-details-marker": { display: "none" },
-      "&::marker": { content: '""' },
+      "&:focus-visible": {
+        outline: `2px solid ${MODERN_TOKENS.colorBrand}`,
+        outlineOffset: "1px",
+      },
     },
+  },
+  typeFilterButtonOpen: {
+    border: `1px solid ${MODERN_TOKENS.colorBorder}`,
+    boxShadow: MODERN_TOKENS.shadowCard,
   },
   typeFilterMenu: {
     position: "absolute",
@@ -290,6 +320,26 @@ const applyCase = (value: string, mode: CaseTransform): string => {
   }
   if (mode === "snake_case") return tokens.map((t) => t.toLowerCase()).join("_");
   return tokens.map((t) => t.toUpperCase()).join("_");
+};
+
+const normalizeNameKey = (value: string) => value.trim().toUpperCase();
+
+const buildScopeKey = (row: Pick<NamedRangeRecord, "scopeType" | "scope">) =>
+  row.scopeType === "Workbook" ? "Workbook" : `Worksheet::${row.scope.toUpperCase()}`;
+
+const buildUniqueScopedName = (
+  baseName: string,
+  occupied: Set<string>,
+  fallbackName: string
+): string => {
+  const trimmedBase = baseName.trim() || fallbackName;
+  let candidate = trimmedBase;
+  let suffix = 2;
+  while (occupied.has(normalizeNameKey(candidate))) {
+    candidate = `${trimmedBase}_${suffix.toString()}`;
+    suffix += 1;
+  }
+  return candidate;
 };
 
 const err = (error: unknown): string => (error instanceof Error ? error.message : String(error));
@@ -433,7 +483,12 @@ const buildNamedListFormula = (listInput: string): string => {
   return `={${literals.join(";")}}`;
 };
 
-const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy, embedded = false }) => {
+const NamesView: React.FC<NamesViewProps> = ({
+  createRequestId,
+  onOpenLegacy,
+  embedded = false,
+  onOpenShape,
+}) => {
   const shared = useModernSharedStyles();
   const styles = useStyles();
   const [rows, setRows] = useState<NamedRangeRecord[]>([]);
@@ -447,9 +502,11 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy, em
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [typeFilters, setTypeFilters] = useState<Set<string>>(new Set());
+  const [typeFilterOpen, setTypeFilterOpen] = useState<boolean>(false);
   const [addressColumnWidth, setAddressColumnWidth] = useState<number>(320);
   const [resizingAddressColumn, setResizingAddressColumn] = useState<boolean>(false);
   const addressResizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
+  const typeFilterRef = useRef<HTMLDivElement | null>(null);
 
   const [editState, setEditState] = useState<EditState>({
     open: false,
@@ -508,25 +565,56 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy, em
     setCreateState(buildDefaultCreateState());
   };
 
-  const load = async () => {
-    setLoading(true);
-    try {
-      const loaded = await getNamedRanges();
-      setRows(loaded);
-      setSelectedIds(new Set());
-      setStatusType("success");
-      setStatus(`Loaded ${loaded.length} name/shape record(s).`);
-    } catch (error) {
-      setStatusType("error");
-      setStatus(`Load failed: ${err(error)}`);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const load = useCallback(
+    async (showStatus = true) => {
+      setLoading(true);
+      try {
+        const loaded = await getNamedRanges();
+        setRows(loaded);
+        setSelectedIds(new Set());
+        if (showStatus) {
+          setStatusType("success");
+          setStatus(`Loaded ${loaded.length} name/shape record(s).`);
+        }
+      } catch (error) {
+        setStatusType("error");
+        setStatus(`Load failed: ${err(error)}`);
+      } finally {
+        setLoading(false);
+      }
+    },
+    []
+  );
 
   useEffect(() => {
     void load();
-  }, []);
+  }, [load]);
+
+  useEffect(() => {
+    const handleFocus = () => {
+      if (
+        createState.open ||
+        editState.open ||
+        moveState.open ||
+        deleteState.open ||
+        bulkState.open
+      ) {
+        return;
+      }
+      void load(false);
+    };
+    window.addEventListener("focus", handleFocus);
+    return () => {
+      window.removeEventListener("focus", handleFocus);
+    };
+  }, [
+    bulkState.open,
+    createState.open,
+    deleteState.open,
+    editState.open,
+    load,
+    moveState.open,
+  ]);
 
   useEffect(() => {
     if (createRequestId > 0) {
@@ -563,6 +651,31 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy, em
     };
   }, [resizingAddressColumn]);
 
+  useEffect(() => {
+    if (!typeFilterOpen) {
+      return undefined;
+    }
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (typeFilterRef.current?.contains(event.target as Node)) {
+        return;
+      }
+      setTypeFilterOpen(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setTypeFilterOpen(false);
+      }
+    };
+
+    window.addEventListener("mousedown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [typeFilterOpen]);
+
   const visibleRows = useMemo(() => {
     const token = search.trim().toLowerCase();
     return rows
@@ -576,7 +689,9 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy, em
           : true
       )
       .sort((a, b) => {
-        const compare = a[sortColumn].localeCompare(b[sortColumn], undefined, { sensitivity: "base" });
+        const compare = a[sortColumn].localeCompare(b[sortColumn], undefined, {
+          sensitivity: "base",
+        });
         return sortDirection === "asc" ? compare : -compare;
       });
   }, [rows, scopeFilter, typeFilters, search, sortColumn, sortDirection]);
@@ -601,16 +716,39 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy, em
 
   const bulkPreview = useMemo(() => {
     const selected = rows.filter((row) => row.kind === "NamedRange" && selectedIds.has(row.id));
+    const occupiedByScope = new Map<string, Set<string>>();
+    rows
+      .filter((row) => row.kind === "NamedRange" && !selectedIds.has(row.id))
+      .forEach((row) => {
+        const scopeKey = buildScopeKey(row);
+        const occupied = occupiedByScope.get(scopeKey) ?? new Set<string>();
+        occupied.add(normalizeNameKey(row.name));
+        occupiedByScope.set(scopeKey, occupied);
+      });
+
     return selected.map((row) => {
+      const scopeKey = buildScopeKey(row);
+      const occupied = occupiedByScope.get(scopeKey) ?? new Set<string>();
       if (bulkState.mode === "Delete") {
-        return { id: row.id, oldName: row.name, newName: row.name, row };
+        return {
+          id: row.id,
+          oldName: row.name,
+          requestedName: row.name,
+          newName: row.name,
+          row,
+          scopeKey,
+        };
       }
-      let newName = row.name;
-      if (bulkState.mode === "Prefix") newName = `${bulkState.value}${row.name}`;
-      if (bulkState.mode === "Suffix") newName = `${row.name}${bulkState.value}`;
-      if (bulkState.mode === "Replace") newName = row.name.replace(bulkState.value, bulkState.replaceWith);
-      newName = applyCase(newName, bulkState.caseTransform);
-      return { id: row.id, oldName: row.name, newName, row };
+      let requestedName = row.name;
+      if (bulkState.mode === "Prefix") requestedName = `${bulkState.value}${row.name}`;
+      if (bulkState.mode === "Suffix") requestedName = `${row.name}${bulkState.value}`;
+      if (bulkState.mode === "Replace")
+        requestedName = row.name.replace(bulkState.value, bulkState.replaceWith);
+      requestedName = applyCase(requestedName, bulkState.caseTransform);
+      const newName = buildUniqueScopedName(requestedName, occupied, row.name);
+      occupied.add(normalizeNameKey(newName));
+      occupiedByScope.set(scopeKey, occupied);
+      return { id: row.id, oldName: row.name, requestedName, newName, row, scopeKey };
     });
   }, [rows, selectedIds, bulkState]);
 
@@ -686,7 +824,11 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy, em
       setStatus("Name is required.");
       return;
     }
-    if (createState.scopeType === "Worksheet" && !createState.scope.trim() && !createState.fallbackSheet.trim()) {
+    if (
+      createState.scopeType === "Worksheet" &&
+      !createState.scope.trim() &&
+      !createState.fallbackSheet.trim()
+    ) {
       setStatusType("error");
       setStatus("Worksheet scope is required for worksheet-level names.");
       return;
@@ -706,14 +848,19 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy, em
         try {
           const selection = await getCurrentSelectionAddress();
           effectiveFallbackSheet = selection.sheet;
-          setCreateState((prev) => ({ ...prev, fallbackSheet: prev.fallbackSheet || selection.sheet }));
+          setCreateState((prev) => ({
+            ...prev,
+            fallbackSheet: prev.fallbackSheet || selection.sheet,
+          }));
         } catch {
           // continue with explicit validation below
         }
       }
       if (!definition.includes("!") && !effectiveFallbackSheet) {
         setStatusType("error");
-        setStatus("Use a qualified reference (for example, Sheet1!A1) or capture a selection first.");
+        setStatus(
+          "Use a qualified reference (for example, Sheet1!A1) or capture a selection first."
+        );
         return;
       }
     }
@@ -747,14 +894,18 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy, em
             ? createState.scope.trim() || effectiveFallbackSheet
             : createState.scope.trim();
         if (createState.scopeType === "Worksheet" && isInternalWorkbookSheetName(scope)) {
-          throw new Error("Choose a workbook worksheet scope (internal __WBM sheets are not allowed).");
+          throw new Error(
+            "Choose a workbook worksheet scope (internal __WBM sheets are not allowed)."
+          );
         }
         if (
           createState.createType === "Range" &&
           !definition.includes("!") &&
           isInternalWorkbookSheetName(effectiveFallbackSheet)
         ) {
-          throw new Error("Use a workbook sheet selection or a qualified reference like Sheet1!A1.");
+          throw new Error(
+            "Use a workbook sheet selection or a qualified reference like Sheet1!A1."
+          );
         }
         await addNamedRange(
           createState.scopeType,
@@ -823,7 +974,13 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy, em
     if (!record) return;
     await runSubmit(
       async () => {
-        await moveNamedRange(record.scopeType, record.scope, record.name, moveState.address, moveState.fallbackSheet);
+        await moveNamedRange(
+          record.scopeType,
+          record.scope,
+          record.name,
+          moveState.address,
+          moveState.fallbackSheet
+        );
         setMoveState({
           open: false,
           record: null,
@@ -886,25 +1043,84 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy, em
             );
             continue;
           }
-          if (row.newName === row.oldName) continue;
-          await updateNamedRange(
-            row.row.scopeType,
-            row.row.scope,
-            row.oldName,
-            row.newName,
-            row.row.address,
-            row.row.sheet
+        }
+
+        if (bulkState.mode !== "Delete") {
+          const changedRows = bulkPreview.filter(
+            (row) => normalizeNameKey(row.newName) !== normalizeNameKey(row.oldName)
           );
+          const occupiedByScope = new Map<string, Set<string>>();
+          rows
+            .filter((row) => row.kind === "NamedRange")
+            .forEach((row) => {
+              const scopeKey = buildScopeKey(row);
+              const occupied = occupiedByScope.get(scopeKey) ?? new Set<string>();
+              occupied.add(normalizeNameKey(row.name));
+              occupiedByScope.set(scopeKey, occupied);
+            });
+
+          const temporaryRows = changedRows.map((row, index) => {
+            const occupied = occupiedByScope.get(row.scopeKey) ?? new Set<string>();
+            let tempName = `__WBM_TMP_NAME_${index.toString()}__`;
+            while (occupied.has(normalizeNameKey(tempName))) {
+              tempName = `__WBM_TMP_NAME_${index.toString()}_${occupied.size.toString()}__`;
+            }
+            occupied.add(normalizeNameKey(tempName));
+            occupiedByScope.set(row.scopeKey, occupied);
+            return { ...row, tempName };
+          });
+
+          for (const row of temporaryRows) {
+            await updateNamedRange(
+              row.row.scopeType,
+              row.row.scope,
+              row.oldName,
+              row.tempName,
+              row.row.address,
+              row.row.sheet
+            );
+          }
+          for (const row of temporaryRows) {
+            await updateNamedRange(
+              row.row.scopeType,
+              row.row.scope,
+              row.tempName,
+              row.newName,
+              row.row.address,
+              row.row.sheet
+            );
+          }
         }
         setBulkState((prev) => ({ ...prev, open: false }));
         setSelectedIds(new Set());
       },
-      `Bulk operation completed for ${bulkPreview.length} range(s).`,
+      bulkState.mode === "Delete"
+        ? `Bulk operation completed for ${bulkPreview.length} range(s).`
+        : (() => {
+            const adjustedCount = bulkPreview.filter(
+              (row) => normalizeNameKey(row.requestedName) !== normalizeNameKey(row.newName)
+            ).length;
+            return adjustedCount > 0
+              ? `Bulk operation completed for ${bulkPreview.length} range(s). ${adjustedCount.toString()} rename(s) were adjusted to avoid collisions.`
+              : `Bulk operation completed for ${bulkPreview.length} range(s).`;
+          })(),
       "Bulk operation failed"
     );
   };
 
   const openNameLink = async (row: NamedRangeRecord) => {
+    if (row.kind === "Shape") {
+      if (!onOpenShape) {
+        setStatusType("error");
+        setStatus(`Shape routing is unavailable for "${row.name}".`);
+        return;
+      }
+      onOpenShape({ sheetName: row.sheet, shapeName: row.name });
+      setStatusType("success");
+      setStatus(`Opened shape editor for "${row.name}".`);
+      return;
+    }
+
     if (row.kind !== "NamedRange") {
       return;
     }
@@ -917,10 +1133,14 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy, em
       }
       return;
     }
-    const normalizedFormula = row.address.trim().startsWith("=") ? row.address.trim() : `=${row.address.trim()}`;
+    const normalizedFormula = row.address.trim().startsWith("=")
+      ? row.address.trim()
+      : `=${row.address.trim()}`;
     try {
       const functionArgs =
-        row.type === "Function" ? extractLambdaArgsFromFormula(normalizedFormula).join(",") : undefined;
+        row.type === "Function"
+          ? extractLambdaArgsFromFormula(normalizedFormula).join(",")
+          : undefined;
       await openFormulaEditorPopout({
         formula: normalizedFormula,
         name: row.name,
@@ -944,7 +1164,9 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy, em
       {!embedded ? (
         <div>
           <Text className={shared.sectionTitle}>Names</Text>
-          <Text className={shared.sectionSubtitle}>Manage named ranges, lists, functions, and workbook objects.</Text>
+          <Text className={shared.sectionSubtitle}>
+            Manage named ranges, lists, functions, and workbook objects.
+          </Text>
         </div>
       ) : null}
 
@@ -954,7 +1176,10 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy, em
             <Button appearance="primary" onClick={() => void openCreateDialog()}>
               + Create Name
             </Button>
-            <Button onClick={() => setBulkState((prev) => ({ ...prev, open: true }))} disabled={selectedIds.size === 0}>
+            <Button
+              onClick={() => setBulkState((prev) => ({ ...prev, open: true }))}
+              disabled={selectedIds.size === 0}
+            >
               Bulk Update ({selectedIds.size})
             </Button>
             <Button onClick={() => void load()} disabled={loading}>
@@ -963,35 +1188,48 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy, em
             <Button onClick={onOpenLegacy}>Open Legacy View</Button>
           </div>
           <div className={styles.toolbarFilters}>
-            <Select value={scopeFilter} onChange={(_, data) => setScopeFilter(data.value as "all" | ScopeType)}>
+            <Select
+              value={scopeFilter}
+              onChange={(_, data) => setScopeFilter(data.value as "all" | ScopeType)}
+            >
               <option value="all">All Scopes</option>
               <option value="Workbook">Workbook</option>
               <option value="Worksheet">Worksheet</option>
             </Select>
-            <details className={styles.typeFilterWrap}>
-              <summary className={styles.typeFilterSummary}>{typeFilterLabel}</summary>
-              <div className={styles.typeFilterMenu}>
-                <label className={styles.typeFilterRow}>
-                  <input
-                    type="checkbox"
-                    checked={typeFilters.size === 0}
-                    onChange={() => setTypeFilters(new Set())}
-                  />
-                  All Types
-                </label>
-                <div className={styles.typeFilterDivider} />
-                {availableTypes.map((type) => (
-                  <label key={type} className={styles.typeFilterRow}>
+            <div className={styles.typeFilterWrap} ref={typeFilterRef}>
+              <button
+                type="button"
+                className={`${styles.typeFilterSummary} ${typeFilterOpen ? styles.typeFilterButtonOpen : ""}`}
+                aria-expanded={typeFilterOpen ? "true" : "false"}
+                aria-controls="names-type-filter-menu"
+                onClick={() => setTypeFilterOpen((prev) => !prev)}
+              >
+                {typeFilterLabel}
+              </button>
+              {typeFilterOpen ? (
+                <div id="names-type-filter-menu" className={styles.typeFilterMenu}>
+                  <label className={styles.typeFilterRow}>
                     <input
                       type="checkbox"
-                      checked={typeFilters.has(type)}
-                      onChange={() => toggleTypeFilter(type)}
+                      checked={typeFilters.size === 0}
+                      onChange={() => setTypeFilters(new Set())}
                     />
-                    {type}
+                    All Types
                   </label>
-                ))}
-              </div>
-            </details>
+                  <div className={styles.typeFilterDivider} />
+                  {availableTypes.map((type) => (
+                    <label key={type} className={styles.typeFilterRow}>
+                      <input
+                        type="checkbox"
+                        checked={typeFilters.has(type)}
+                        onChange={() => toggleTypeFilter(type)}
+                      />
+                      {type}
+                    </label>
+                  ))}
+                </div>
+              ) : null}
+            </div>
             <Input
               placeholder="Search names, address, scope..."
               value={search}
@@ -1004,13 +1242,13 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy, em
       <div className={styles.tableWrap}>
         <table className={styles.table}>
           <colgroup>
-            <col style={{ width: "44px" }} />
-            <col style={{ width: "180px" }} />
-            <col style={{ width: "200px" }} />
-            <col style={{ width: `${addressColumnWidth.toString()}px` }} />
-            <col style={{ width: "140px" }} />
-            <col style={{ width: "140px" }} />
-            <col style={{ width: "180px" }} />
+            <col width={44} />
+            <col width={180} />
+            <col width={200} />
+            <col width={addressColumnWidth} />
+            <col width={140} />
+            <col width={140} />
+            <col width={180} />
           </colgroup>
           <thead>
             <tr>
@@ -1018,6 +1256,11 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy, em
                 <input
                   type="checkbox"
                   checked={allSelected}
+                  aria-label={
+                    allSelected
+                      ? "Clear selection for all visible named ranges"
+                      : "Select all visible named ranges"
+                  }
                   onChange={() =>
                     setSelectedIds((prev) => {
                       const next = new Set(prev);
@@ -1037,7 +1280,11 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy, em
                   key={column}
                   className={`${styles.headCell} ${column === "address" ? styles.addressHeadCell : ""}`}
                 >
-                  <button type="button" className={styles.sortBtn} onClick={() => toggleSort(column)}>
+                  <button
+                    type="button"
+                    className={styles.sortBtn}
+                    onClick={() => toggleSort(column)}
+                  >
                     {column[0].toUpperCase() + column.slice(1)}
                     {sortColumn === column ? (sortDirection === "asc" ? " ▲" : " ▼") : ""}
                   </button>
@@ -1060,6 +1307,7 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy, em
                     type="checkbox"
                     checked={selectedIds.has(row.id)}
                     disabled={row.kind !== "NamedRange" || !row.isRange}
+                    aria-label={`Select named range ${row.name}`}
                     onChange={() =>
                       setSelectedIds((prev) => {
                         const next = new Set(prev);
@@ -1079,10 +1327,14 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy, em
                         setEditState({
                           open: true,
                           record: row,
-                          editType: row.type === "List" ? "List" : row.isRange ? "Range" : "Formula",
+                          editType:
+                            row.type === "List" ? "List" : row.isRange ? "Range" : "Formula",
                           name: row.name,
                           address: row.address,
-                          listValues: row.type === "List" ? parseNamedListFormula(row.address).join("\n") : "",
+                          listValues:
+                            row.type === "List"
+                              ? parseNamedListFormula(row.address).join("\n")
+                              : "",
                           fallbackSheet: row.sheet,
                           caseTransform: "none",
                         })
@@ -1121,15 +1373,17 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy, em
                   </div>
                 </td>
                 <td className={styles.cell}>
-                  {row.kind === "NamedRange" ? (
+                  {row.kind === "NamedRange" || row.kind === "Shape" ? (
                     <button
                       type="button"
                       className={styles.linkBtn}
                       onClick={() => void openNameLink(row)}
                       title={
-                        row.isRange
-                          ? `Go to ${row.address}`
-                          : `Formula-based name (${row.type})`
+                        row.kind === "Shape"
+                          ? `Open shape editor for ${row.name}`
+                          : row.isRange
+                            ? `Go to ${row.address}`
+                            : `Formula-based name (${row.type})`
                       }
                     >
                       {row.name}
@@ -1174,27 +1428,43 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy, em
             <div className={styles.modalGrid}>
               <div>
                 <Text className={shared.mutedText}>Name</Text>
-                <Input value={createState.name} onChange={(_, data) => setCreateState((p) => ({ ...p, name: data.value }))} />
+                <Input
+                  value={createState.name}
+                  onChange={(_, data) => setCreateState((p) => ({ ...p, name: data.value }))}
+                />
+              </div>
+              {createState.createType === "Range" ? (
+                <div className={styles.full}>
+                  <Text className={shared.mutedText}>Address / Selected Range</Text>
+                  <Input
+                    value={createState.address}
+                    onChange={(_, data) => setCreateState((p) => ({ ...p, address: data.value }))}
+                  />
+                </div>
+              ) : null}
+              <div>
+                <Text className={shared.mutedText}>Scope</Text>
+                <Select
+                  value={createState.scopeType}
+                  onChange={(_, data) =>
+                    setCreateState((p) => ({ ...p, scopeType: data.value as ScopeType }))
+                  }
+                >
+                  <option value="Workbook">Workbook</option>
+                  <option value="Worksheet">Worksheet</option>
+                </Select>
               </div>
               <div>
-                <Text className={shared.mutedText}>Create As</Text>
+                <Text className={shared.mutedText}>Type</Text>
                 <Select
                   value={createState.createType}
-                  onChange={(_, data) => setCreateState((p) => ({ ...p, createType: data.value as CreateEntryType }))}
+                  onChange={(_, data) =>
+                    setCreateState((p) => ({ ...p, createType: data.value as CreateEntryType }))
+                  }
                 >
                   <option value="Range">Range</option>
                   <option value="Function">Function (LAMBDA)</option>
                   <option value="List">List (Named Array)</option>
-                </Select>
-              </div>
-              <div>
-                <Text className={shared.mutedText}>Scope Type</Text>
-                <Select
-                  value={createState.scopeType}
-                  onChange={(_, data) => setCreateState((p) => ({ ...p, scopeType: data.value as ScopeType }))}
-                >
-                  <option value="Workbook">Workbook</option>
-                  <option value="Worksheet">Worksheet</option>
                 </Select>
               </div>
               {createState.scopeType === "Worksheet" ? (
@@ -1207,15 +1477,6 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy, em
                   />
                 </div>
               ) : null}
-              {createState.createType === "Range" ? (
-                <div className={styles.full}>
-                  <Text className={shared.mutedText}>Address</Text>
-                  <Input
-                    value={createState.address}
-                    onChange={(_, data) => setCreateState((p) => ({ ...p, address: data.value }))}
-                  />
-                </div>
-              ) : null}
               {createState.createType === "Function" ? (
                 <>
                   <div className={styles.full}>
@@ -1223,7 +1484,9 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy, em
                     <Input
                       value={createState.lambdaArgs}
                       placeholder="table, lookupValue"
-                      onChange={(_, data) => setCreateState((p) => ({ ...p, lambdaArgs: data.value }))}
+                      onChange={(_, data) =>
+                        setCreateState((p) => ({ ...p, lambdaArgs: data.value }))
+                      }
                     />
                   </div>
                   <div className={styles.full}>
@@ -1237,7 +1500,9 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy, em
                         ))}
                       </div>
                     ) : (
-                      <Text className={shared.mutedText}>No arguments set. The function will save as `LAMBDA(calculation)`.</Text>
+                      <Text className={shared.mutedText}>
+                        No arguments set. The function will save as `LAMBDA(calculation)`.
+                      </Text>
                     )}
                   </div>
                   <div className={styles.full}>
@@ -1245,7 +1510,9 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy, em
                     <textarea
                       className={styles.multilineInput}
                       value={createState.functionBody}
-                      onChange={(event) => setCreateState((p) => ({ ...p, functionBody: event.target.value }))}
+                      onChange={(event) =>
+                        setCreateState((p) => ({ ...p, functionBody: event.target.value }))
+                      }
                       placeholder="Enter a formula body, or paste a full LAMBDA formula."
                     />
                   </div>
@@ -1257,8 +1524,12 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy, em
                   <textarea
                     className={styles.multilineInput}
                     value={createState.listValues}
-                    onChange={(event) => setCreateState((p) => ({ ...p, listValues: event.target.value }))}
-                    placeholder={"Enter values separated by commas or new lines.\nExample:\nOpen\nIn Progress\nClosed"}
+                    onChange={(event) =>
+                      setCreateState((p) => ({ ...p, listValues: event.target.value }))
+                    }
+                    placeholder={
+                      "Enter values separated by commas or new lines.\nExample:\nOpen\nIn Progress\nClosed"
+                    }
                   />
                   <Text className={shared.mutedText}>
                     Saved as a named array formula so it can be used in data validation lists.
@@ -1284,7 +1555,11 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy, em
                 </Button>
               ) : null}
               <Button onClick={closeCreateDialog}>Cancel</Button>
-              <Button appearance="primary" disabled={submitting} onClick={() => void submitCreate()}>
+              <Button
+                appearance="primary"
+                disabled={submitting}
+                onClick={() => void submitCreate()}
+              >
                 Create
               </Button>
             </div>
@@ -1301,7 +1576,10 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy, em
             <div className={styles.modalGrid}>
               <div>
                 <Text className={shared.mutedText}>Name</Text>
-                <Input value={editState.name} onChange={(_, data) => setEditState((p) => ({ ...p, name: data.value }))} />
+                <Input
+                  value={editState.name}
+                  onChange={(_, data) => setEditState((p) => ({ ...p, name: data.value }))}
+                />
               </div>
               <div>
                 <Text className={shared.mutedText}>Case Transform</Text>
@@ -1323,7 +1601,9 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy, em
                   <textarea
                     className={styles.multilineInput}
                     value={editState.listValues}
-                    onChange={(event) => setEditState((p) => ({ ...p, listValues: event.target.value }))}
+                    onChange={(event) =>
+                      setEditState((p) => ({ ...p, listValues: event.target.value }))
+                    }
                     placeholder={"Open\nIn Progress\nClosed"}
                   />
                 </div>
@@ -1382,7 +1662,10 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy, em
           <div className={styles.modal}>
             <Text className={shared.cardTitle}>Move Named Range</Text>
             <Text className={shared.mutedText}>Address</Text>
-            <Input value={moveState.address} onChange={(_, data) => setMoveState((p) => ({ ...p, address: data.value }))} />
+            <Input
+              value={moveState.address}
+              onChange={(_, data) => setMoveState((p) => ({ ...p, address: data.value }))}
+            />
             <div className={styles.modalActions}>
               <Button
                 onClick={() =>
@@ -1397,7 +1680,11 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy, em
               >
                 Use Selection
               </Button>
-              <Button onClick={() => setMoveState({ open: false, record: null, address: "", fallbackSheet: "" })}>
+              <Button
+                onClick={() =>
+                  setMoveState({ open: false, record: null, address: "", fallbackSheet: "" })
+                }
+              >
                 Cancel
               </Button>
               <Button appearance="primary" disabled={submitting} onClick={() => void submitMove()}>
@@ -1416,7 +1703,9 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy, em
               <input
                 type="checkbox"
                 checked={deleteState.deleteName}
-                onChange={(event) => setDeleteState((p) => ({ ...p, deleteName: event.target.checked }))}
+                onChange={(event) =>
+                  setDeleteState((p) => ({ ...p, deleteName: event.target.checked }))
+                }
               />{" "}
               Delete name
             </label>
@@ -1424,7 +1713,9 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy, em
               <input
                 type="checkbox"
                 checked={deleteState.deleteValues}
-                onChange={(event) => setDeleteState((p) => ({ ...p, deleteValues: event.target.checked }))}
+                onChange={(event) =>
+                  setDeleteState((p) => ({ ...p, deleteValues: event.target.checked }))
+                }
               />{" "}
               Delete range values
             </label>
@@ -1441,7 +1732,11 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy, em
               >
                 Cancel
               </Button>
-              <Button appearance="primary" disabled={submitting} onClick={() => void submitDelete()}>
+              <Button
+                appearance="primary"
+                disabled={submitting}
+                onClick={() => void submitDelete()}
+              >
                 Apply
               </Button>
             </div>
@@ -1456,7 +1751,12 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy, em
             <div className={styles.modalGrid}>
               <div>
                 <Text className={shared.mutedText}>Mode</Text>
-                <Select value={bulkState.mode} onChange={(_, data) => setBulkState((p) => ({ ...p, mode: data.value as BulkState["mode"] }))}>
+                <Select
+                  value={bulkState.mode}
+                  onChange={(_, data) =>
+                    setBulkState((p) => ({ ...p, mode: data.value as BulkState["mode"] }))
+                  }
+                >
                   <option value="Prefix">Prefix</option>
                   <option value="Suffix">Suffix</option>
                   <option value="Replace">Replace</option>
@@ -1480,13 +1780,23 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy, em
               {bulkState.mode !== "Delete" ? (
                 <>
                   <div className={styles.full}>
-                    <Text className={shared.mutedText}>{bulkState.mode === "Replace" ? "Find Text" : "Text"}</Text>
-                    <Input value={bulkState.value} onChange={(_, data) => setBulkState((p) => ({ ...p, value: data.value }))} />
+                    <Text className={shared.mutedText}>
+                      {bulkState.mode === "Replace" ? "Find Text" : "Text"}
+                    </Text>
+                    <Input
+                      value={bulkState.value}
+                      onChange={(_, data) => setBulkState((p) => ({ ...p, value: data.value }))}
+                    />
                   </div>
                   {bulkState.mode === "Replace" ? (
                     <div className={styles.full}>
                       <Text className={shared.mutedText}>Replace With</Text>
-                      <Input value={bulkState.replaceWith} onChange={(_, data) => setBulkState((p) => ({ ...p, replaceWith: data.value }))} />
+                      <Input
+                        value={bulkState.replaceWith}
+                        onChange={(_, data) =>
+                          setBulkState((p) => ({ ...p, replaceWith: data.value }))
+                        }
+                      />
                     </div>
                   ) : null}
                 </>
@@ -1496,7 +1806,9 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy, em
                     <input
                       type="checkbox"
                       checked={bulkState.deleteName}
-                      onChange={(event) => setBulkState((p) => ({ ...p, deleteName: event.target.checked }))}
+                      onChange={(event) =>
+                        setBulkState((p) => ({ ...p, deleteName: event.target.checked }))
+                      }
                     />{" "}
                     Delete names
                   </label>
@@ -1504,7 +1816,9 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy, em
                     <input
                       type="checkbox"
                       checked={bulkState.deleteValues}
-                      onChange={(event) => setBulkState((p) => ({ ...p, deleteValues: event.target.checked }))}
+                      onChange={(event) =>
+                        setBulkState((p) => ({ ...p, deleteValues: event.target.checked }))
+                      }
                     />{" "}
                     Delete range values
                   </label>
@@ -1514,7 +1828,11 @@ const NamesView: React.FC<NamesViewProps> = ({ createRequestId, onOpenLegacy, em
             <Text className={shared.mutedText}>{`Preview rows: ${bulkPreview.length}`}</Text>
             <div className={styles.modalActions}>
               <Button onClick={() => setBulkState((p) => ({ ...p, open: false }))}>Cancel</Button>
-              <Button appearance="primary" disabled={submitting || bulkPreview.length === 0} onClick={() => void submitBulk()}>
+              <Button
+                appearance="primary"
+                disabled={submitting || bulkPreview.length === 0}
+                onClick={() => void submitBulk()}
+              >
                 Apply
               </Button>
             </div>

@@ -29,6 +29,40 @@ export interface TableRecord {
   scope: string;
 }
 
+export interface TableColumnRecord {
+  id: string;
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+  tableName: string;
+  name: string;
+  address: string;
+  sheet: string;
+=======
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+  name: string;
+  address: string;
+}
+
+export interface CreateNamedRangesFromTableRequest {
+  sheetName: string;
+  tableName: string;
+  columns: string[];
+  scopeType: "Workbook" | "Worksheet";
+  conflictMode: "prefix" | "suffix" | "rename";
+  conflictValue: string;
+<<<<<<< ours
+<<<<<<< ours
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+}
+
 export interface FormulaEvaluationResult {
   address: string;
   values: (string | number | boolean | null)[][];
@@ -158,6 +192,7 @@ export interface ShapeBuilderShapeRecord {
   sheetName: string;
   shapeName: string;
   shapeType: InsertableShapeType;
+  anchorAddress: string;
   text: string;
   iconKey: string;
   fillColor: string;
@@ -191,6 +226,7 @@ export interface CreateShapeBuilderShapeRequest {
   height: number;
   left?: number;
   top?: number;
+  anchorAddress?: string;
   fontColor: string;
   fontSize: number;
   bold: boolean;
@@ -374,6 +410,8 @@ interface FormulaDialogOpenFormulaMessage {
   wizardArgs?: string;
   wizardReturnExpression?: string;
   wizardVariables?: Array<{ name: string; expression: string }>;
+  activeSubTab?: "metadata" | "lambda-test" | "editor" | "wizard" | "live-output";
+  lambdaTestInputs?: string[];
 }
 
 async function runFormattingCommand(command: (context: Excel.RequestContext) => Promise<void>) {
@@ -670,7 +708,9 @@ function inferInsertableShapeType(
   return "Rectangle";
 }
 
-function toGeometricShapeType(shapeType: Exclude<InsertableShapeType, "TextBox">): Excel.GeometricShapeType {
+function toGeometricShapeType(
+  shapeType: Exclude<InsertableShapeType, "TextBox">
+): Excel.GeometricShapeType {
   const geometricMap: Record<Exclude<InsertableShapeType, "TextBox">, Excel.GeometricShapeType> = {
     Rectangle: Excel.GeometricShapeType.rectangle,
     RoundedRectangle: "Round2SameRectangle" as unknown as Excel.GeometricShapeType,
@@ -746,7 +786,9 @@ export async function arrangeWorkbookWindows(layout: WorkbookWindowArrangeLayout
     await context.sync();
 
     const activeGroupKey = normalizeWindowGroupKey(activeWindow.name);
-    const workbookWindows = windows.items.filter((windowItem) => asString(windowItem.type) === Excel.WindowType.workbook);
+    const workbookWindows = windows.items.filter(
+      (windowItem) => asString(windowItem.type) === Excel.WindowType.workbook
+    );
     const sameWorkbookWindows = workbookWindows.filter(
       (windowItem) => normalizeWindowGroupKey(windowItem.name) === activeGroupKey
     );
@@ -790,9 +832,18 @@ export async function arrangeWorkbookWindows(layout: WorkbookWindowArrangeLayout
     }
 
     if (layout === "Cascade") {
-      const offset = Math.max(24, Math.min(48, Math.floor(Math.min(availableWidth, availableHeight) / 16)));
-      const cascadeWidth = Math.max(440, availableWidth - offset * Math.max(targetWindows.length - 1, 0));
-      const cascadeHeight = Math.max(300, availableHeight - offset * Math.max(targetWindows.length - 1, 0));
+      const offset = Math.max(
+        24,
+        Math.min(48, Math.floor(Math.min(availableWidth, availableHeight) / 16))
+      );
+      const cascadeWidth = Math.max(
+        440,
+        availableWidth - offset * Math.max(targetWindows.length - 1, 0)
+      );
+      const cascadeHeight = Math.max(
+        300,
+        availableHeight - offset * Math.max(targetWindows.length - 1, 0)
+      );
       targetWindows.forEach((windowItem, index) => {
         windowItem.left = originLeft + index * offset;
         windowItem.top = originTop + index * offset;
@@ -851,7 +902,8 @@ async function setActiveSheetVisibility(visibility: Excel.SheetVisibility): Prom
     await context.sync();
 
     const visibleSheets = sheets.items.filter(
-      (sheet) => asString(sheet.visibility).toLowerCase() === Excel.SheetVisibility.visible.toLowerCase()
+      (sheet) =>
+        asString(sheet.visibility).toLowerCase() === Excel.SheetVisibility.visible.toLowerCase()
     );
     const isActiveVisible = visibleSheets.some((sheet) => sheet.name === activeSheet.name);
     if (isActiveVisible && visibleSheets.length <= 1) {
@@ -1050,14 +1102,19 @@ function asBoolean(value: unknown, fallback = false): boolean {
 
 function loadSheetFormatTemplateCell(templateCell: Excel.Range): void {
   templateCell.load("numberFormat");
-  templateCell.format.load("fill/color,horizontalAlignment,verticalAlignment,wrapText,shrinkToFit,indentLevel");
+  templateCell.format.load(
+    "fill/color,horizontalAlignment,verticalAlignment,wrapText,shrinkToFit,indentLevel"
+  );
   templateCell.format.font.load("name,size,bold,italic,underline,color");
 }
 
 function buildSheetFormatStyle(templateCell: Excel.Range): SheetFormatStyle {
   const underlineRaw = asString(templateCell.format.font.underline, "None").toLowerCase();
   const isUnderlined =
-    underlineRaw.length > 0 && underlineRaw !== "none" && underlineRaw !== "false" && underlineRaw !== "0";
+    underlineRaw.length > 0 &&
+    underlineRaw !== "none" &&
+    underlineRaw !== "false" &&
+    underlineRaw !== "0";
   const formatValue = templateCell.numberFormat?.[0]?.[0];
 
   return {
@@ -1072,7 +1129,10 @@ function buildSheetFormatStyle(templateCell: Excel.Range): SheetFormatStyle {
       templateCell.format.horizontalAlignment,
       DEFAULT_SHEET_FORMAT_STYLE.horizontalAlignment
     ),
-    verticalAlignment: asString(templateCell.format.verticalAlignment, DEFAULT_SHEET_FORMAT_STYLE.verticalAlignment),
+    verticalAlignment: asString(
+      templateCell.format.verticalAlignment,
+      DEFAULT_SHEET_FORMAT_STYLE.verticalAlignment
+    ),
     wrapText: asBoolean(templateCell.format.wrapText, DEFAULT_SHEET_FORMAT_STYLE.wrapText),
     shrinkToFit: asBoolean(templateCell.format.shrinkToFit, DEFAULT_SHEET_FORMAT_STYLE.shrinkToFit),
     indentLevel: asNumber(templateCell.format.indentLevel, DEFAULT_SHEET_FORMAT_STYLE.indentLevel),
@@ -1084,16 +1144,19 @@ function applySheetFormatStyle(templateCell: Excel.Range, style: SheetFormatStyl
   templateCell.format.fill.color = style.fillColor || DEFAULT_SHEET_FORMAT_STYLE.fillColor;
   templateCell.format.font.color = style.fontColor || DEFAULT_SHEET_FORMAT_STYLE.fontColor;
   templateCell.format.font.name = style.fontName || DEFAULT_SHEET_FORMAT_STYLE.fontName;
-  templateCell.format.font.size = Math.max(6, asNumber(style.fontSize, DEFAULT_SHEET_FORMAT_STYLE.fontSize));
+  templateCell.format.font.size = Math.max(
+    6,
+    asNumber(style.fontSize, DEFAULT_SHEET_FORMAT_STYLE.fontSize)
+  );
   templateCell.format.font.bold = asBoolean(style.bold, false);
   templateCell.format.font.italic = asBoolean(style.italic, false);
-  templateCell.format.font.underline = (style.underline ? "Single" : "None") as unknown as Excel.RangeUnderlineStyle;
-  templateCell.format.horizontalAlignment = (
-    style.horizontalAlignment || DEFAULT_SHEET_FORMAT_STYLE.horizontalAlignment
-  ) as unknown as Excel.HorizontalAlignment;
-  templateCell.format.verticalAlignment = (
-    style.verticalAlignment || DEFAULT_SHEET_FORMAT_STYLE.verticalAlignment
-  ) as unknown as Excel.VerticalAlignment;
+  templateCell.format.font.underline = (style.underline
+    ? "Single"
+    : "None") as unknown as Excel.RangeUnderlineStyle;
+  templateCell.format.horizontalAlignment = (style.horizontalAlignment ||
+    DEFAULT_SHEET_FORMAT_STYLE.horizontalAlignment) as unknown as Excel.HorizontalAlignment;
+  templateCell.format.verticalAlignment = (style.verticalAlignment ||
+    DEFAULT_SHEET_FORMAT_STYLE.verticalAlignment) as unknown as Excel.VerticalAlignment;
   templateCell.format.wrapText = asBoolean(style.wrapText, false);
   templateCell.format.shrinkToFit = asBoolean(style.shrinkToFit, false);
   templateCell.format.indentLevel = Math.max(0, Math.round(asNumber(style.indentLevel, 0)));
@@ -1110,7 +1173,16 @@ async function ensureSheetFormatStore(context: Excel.RequestContext): Promise<Ex
     : (existing as Excel.Worksheet);
   store.visibility = Excel.SheetVisibility.hidden;
   store.getRange("A1:H1").values = [
-    ["Id", "Name", "SourceSheet", "SourceAddress", "CreatedAt", "UpdatedAt", "Template", "TemplateSheet"],
+    [
+      "Id",
+      "Name",
+      "SourceSheet",
+      "SourceAddress",
+      "CreatedAt",
+      "UpdatedAt",
+      "Template",
+      "TemplateSheet",
+    ],
   ];
   return store;
 }
@@ -1248,18 +1320,24 @@ export async function captureSheetFormat(name: string): Promise<SheetFormatRecor
     const rowIndex = used.isNullObject ? 1 : Math.max(1, used.rowCount);
     const id = `fmt-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
     const nowIso = new Date().toISOString();
-    const parsedAddress = !usedRange.isNullObject ? splitQualifiedAddress(usedRange.address) : splitQualifiedAddress(sourceCell.address);
-    const sourceAddress = parsedAddress.address || (!usedRange.isNullObject ? usedRange.address : sourceCell.address);
+    const parsedAddress = !usedRange.isNullObject
+      ? splitQualifiedAddress(usedRange.address)
+      : splitQualifiedAddress(sourceCell.address);
+    const sourceAddress =
+      parsedAddress.address || (!usedRange.isNullObject ? usedRange.address : sourceCell.address);
 
     const templateSheet = activeSheet.copy(Excel.WorksheetPositionType.end);
-    const templateSheetName = `${SHEET_FORMAT_TEMPLATE_PREFIX}${Date.now().toString(36)}${Math.random()
-      .toString(36)
-      .slice(2, 6)}`.slice(0, 31);
+    const templateSheetName =
+      `${SHEET_FORMAT_TEMPLATE_PREFIX}${Date.now().toString(36)}${Math.random()
+        .toString(36)
+        .slice(2, 6)}`.slice(0, 31);
     templateSheet.name = templateSheetName;
     templateSheet.visibility = Excel.SheetVisibility.hidden;
 
     const metaRange = store.getRangeByIndexes(rowIndex, 0, 1, 8);
-    metaRange.values = [[id, trimmedName, activeSheet.name, sourceAddress, nowIso, nowIso, "", templateSheetName]];
+    metaRange.values = [
+      [id, trimmedName, activeSheet.name, sourceAddress, nowIso, nowIso, "", templateSheetName],
+    ];
 
     const templateCell = store.getRangeByIndexes(rowIndex, 6, 1, 1);
     templateCell.clear(Excel.ClearApplyTo.all);
@@ -1348,7 +1426,9 @@ async function applySheetFormatInternal(id: string, applyToAllSheets: boolean): 
 
     const templateCell = (store as Excel.Worksheet).getRangeByIndexes(rowIndex, 6, 1, 1);
     if (applyToAllSheets) {
-      throw new Error("This format was saved before full-sheet capture support. Recapture it first, then apply to all sheets.");
+      throw new Error(
+        "This format was saved before full-sheet capture support. Recapture it first, then apply to all sheets."
+      );
     }
     const selection = context.workbook.getSelectedRange();
     selection.copyFrom(templateCell, Excel.RangeCopyType.formats);
@@ -1364,7 +1444,10 @@ export async function applySheetFormatToAllSheets(id: string): Promise<void> {
   await applySheetFormatInternal(id, true);
 }
 
-export async function updateSheetFormat(id: string, request: UpdateSheetFormatRequest): Promise<SheetFormatRecord> {
+export async function updateSheetFormat(
+  id: string,
+  request: UpdateSheetFormatRequest
+): Promise<SheetFormatRecord> {
   const trimmedId = id.trim();
   const trimmedName = request.name.trim();
   if (!trimmedId) {
@@ -1397,7 +1480,18 @@ export async function updateSheetFormat(id: string, request: UpdateSheetFormatRe
     const updatedAt = new Date().toISOString();
     const templateSheetName = asString(values[7]);
 
-    metaRange.values = [[trimmedId, trimmedName, sourceSheet, sourceAddress, createdAt, updatedAt, "", templateSheetName]];
+    metaRange.values = [
+      [
+        trimmedId,
+        trimmedName,
+        sourceSheet,
+        sourceAddress,
+        createdAt,
+        updatedAt,
+        "",
+        templateSheetName,
+      ],
+    ];
 
     const templateCell = (store as Excel.Worksheet).getRangeByIndexes(rowIndex, 6, 1, 1);
     applySheetFormatStyle(templateCell, request.style);
@@ -1454,14 +1548,18 @@ export async function recaptureSheetFormatFromSelection(id: string): Promise<She
     const parsedAddress = !sourceUsedRange.isNullObject
       ? splitQualifiedAddress(sourceUsedRange.address)
       : splitQualifiedAddress(sourceCell.address);
-    const sourceAddress = parsedAddress.address || (!sourceUsedRange.isNullObject ? sourceUsedRange.address : sourceCell.address);
+    const sourceAddress =
+      parsedAddress.address ||
+      (!sourceUsedRange.isNullObject ? sourceUsedRange.address : sourceCell.address);
     const updatedAt = new Date().toISOString();
-    const templateSheetName = `${SHEET_FORMAT_TEMPLATE_PREFIX}${Date.now().toString(36)}${Math.random()
-      .toString(36)
-      .slice(2, 6)}`.slice(0, 31);
+    const templateSheetName =
+      `${SHEET_FORMAT_TEMPLATE_PREFIX}${Date.now().toString(36)}${Math.random()
+        .toString(36)
+        .slice(2, 6)}`.slice(0, 31);
 
     if (existingTemplateSheetName) {
-      const existingTemplateSheet = context.workbook.worksheets.getItemOrNullObject(existingTemplateSheetName);
+      const existingTemplateSheet =
+        context.workbook.worksheets.getItemOrNullObject(existingTemplateSheetName);
       existingTemplateSheet.load("name");
       await context.sync();
       if (!existingTemplateSheet.isNullObject) {
@@ -1473,7 +1571,18 @@ export async function recaptureSheetFormatFromSelection(id: string): Promise<She
     copiedTemplateSheet.name = templateSheetName;
     copiedTemplateSheet.visibility = Excel.SheetVisibility.hidden;
 
-    metaRange.values = [[trimmedId, name, activeSheet.name, sourceAddress, createdAt, updatedAt, "", templateSheetName]];
+    metaRange.values = [
+      [
+        trimmedId,
+        name,
+        activeSheet.name,
+        sourceAddress,
+        createdAt,
+        updatedAt,
+        "",
+        templateSheetName,
+      ],
+    ];
 
     const templateCell = (store as Excel.Worksheet).getRangeByIndexes(rowIndex, 6, 1, 1);
     templateCell.clear(Excel.ClearApplyTo.all);
@@ -1537,7 +1646,11 @@ function isInternalWorkbookSheet(sheetName: string): boolean {
   if (!sheetName) {
     return true;
   }
-  if (sheetName === SHEET_FORMAT_STORE_SHEET || sheetName === "__WBM_META" || sheetName === "__WBM_FUNCTION_EVAL") {
+  if (
+    sheetName === SHEET_FORMAT_STORE_SHEET ||
+    sheetName === "__WBM_META" ||
+    sheetName === "__WBM_FUNCTION_EVAL"
+  ) {
     return true;
   }
   return sheetName.startsWith(SHEET_FORMAT_TEMPLATE_PREFIX);
@@ -1708,7 +1821,9 @@ export async function listNavigationDestinations(): Promise<NavigationDestinatio
       });
     });
 
-    options.sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: "base" }));
+    options.sort((left, right) =>
+      left.label.localeCompare(right.label, undefined, { sensitivity: "base" })
+    );
     return options;
   });
 }
@@ -1828,7 +1943,9 @@ export async function activateNavigationDestination(destinationId: string): Prom
   });
 }
 
-export async function applyNavigationTemplate(request: ApplyNavigationTemplateRequest): Promise<void> {
+export async function applyNavigationTemplate(
+  request: ApplyNavigationTemplateRequest
+): Promise<void> {
   if (!request.buttons.length) {
     throw new Error("Add at least one navigation button before applying.");
   }
@@ -1866,7 +1983,9 @@ export async function applyNavigationTemplate(request: ApplyNavigationTemplateRe
       await context.sync();
 
       const navId = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-      const panelShape = sheet.shapes.addGeometricShape("Round2SameRectangle" as unknown as Excel.GeometricShapeType);
+      const panelShape = sheet.shapes.addGeometricShape(
+        "Round2SameRectangle" as unknown as Excel.GeometricShapeType
+      );
       panelShape.name = `${NAV_PANEL_PREFIX}${navId}`;
       panelShape.left = Math.max(0, request.originLeft);
       panelShape.top = Math.max(0, request.originTop);
@@ -1901,17 +2020,25 @@ export async function applyNavigationTemplate(request: ApplyNavigationTemplateRe
         buttonShape.textFrame.textRange.text = button.label;
         buttonShape.textFrame.textRange.font.color = button.fontColor;
         buttonShape.textFrame.textRange.font.bold = true;
-        buttonShape.textFrame.horizontalAlignment = "Left" as unknown as Excel.ShapeTextHorizontalAlignment;
-        buttonShape.textFrame.verticalAlignment = "Middle" as unknown as Excel.ShapeTextVerticalAlignment;
+        buttonShape.textFrame.horizontalAlignment =
+          "Left" as unknown as Excel.ShapeTextHorizontalAlignment;
+        buttonShape.textFrame.verticalAlignment =
+          "Middle" as unknown as Excel.ShapeTextVerticalAlignment;
         buttonShape.altTextDescription = `${NAV_TARGET_PREFIX}${button.destinationId}`;
         buttonShape.width = request.buttonWidth;
         buttonShape.height = request.buttonHeight;
 
         if (request.layout === "Vertical") {
           buttonShape.left = request.originLeft + request.panelPadding;
-          buttonShape.top = request.originTop + request.panelPadding + index * (request.buttonHeight + request.buttonGap);
+          buttonShape.top =
+            request.originTop +
+            request.panelPadding +
+            index * (request.buttonHeight + request.buttonGap);
         } else {
-          buttonShape.left = request.originLeft + request.panelPadding + index * (request.buttonWidth + request.buttonGap);
+          buttonShape.left =
+            request.originLeft +
+            request.panelPadding +
+            index * (request.buttonWidth + request.buttonGap);
           buttonShape.top = request.originTop + request.panelPadding;
         }
       });
@@ -2098,11 +2225,29 @@ function fallbackIconSymbolFromKey(key: string): string {
   if (normalized.includes("chevron_up")) return "˄";
   if (normalized.includes("chevron_down")) return "˅";
   if (normalized.includes("home")) return "⌂";
-  if (normalized.includes("dashboard") || normalized.includes("data") || normalized.includes("table") || normalized.includes("database")) return "▦";
+  if (
+    normalized.includes("dashboard") ||
+    normalized.includes("data") ||
+    normalized.includes("table") ||
+    normalized.includes("database")
+  )
+    return "▦";
   if (normalized.includes("report") || normalized.includes("chart")) return "▤";
-  if (normalized.includes("document") || normalized.includes("file") || normalized.includes("folder") || normalized.includes("template")) return "▣";
+  if (
+    normalized.includes("document") ||
+    normalized.includes("file") ||
+    normalized.includes("folder") ||
+    normalized.includes("template")
+  )
+    return "▣";
   if (normalized.includes("search")) return "⌕";
-  if (normalized.includes("setting") || normalized.includes("gear") || normalized.includes("tool") || normalized.includes("wrench")) return "⚙";
+  if (
+    normalized.includes("setting") ||
+    normalized.includes("gear") ||
+    normalized.includes("tool") ||
+    normalized.includes("wrench")
+  )
+    return "⚙";
   if (normalized.includes("help")) return "?";
   if (normalized.includes("info")) return "ℹ";
   if (normalized.includes("warning")) return "⚠";
@@ -2115,7 +2260,12 @@ function fallbackIconSymbolFromKey(key: string): string {
   if (normalized.includes("refresh") || normalized.includes("sync")) return "↻";
   if (normalized.includes("filter")) return "≣";
   if (normalized.includes("sort")) return "⇅";
-  if (normalized.includes("link") || normalized.includes("external") || normalized.includes("share")) return "↗";
+  if (
+    normalized.includes("link") ||
+    normalized.includes("external") ||
+    normalized.includes("share")
+  )
+    return "↗";
   if (normalized.includes("download")) return "⬇";
   if (normalized.includes("upload")) return "⬆";
   if (normalized.includes("mail")) return "✉";
@@ -2161,7 +2311,13 @@ function fallbackIconSymbolFromKey(key: string): string {
   if (normalized.includes("hexagon")) return "⬡";
   if (normalized.includes("eye")) return "◉";
   if (normalized.includes("hide")) return "◌";
-  if (normalized.includes("package") || normalized.includes("truck") || normalized.includes("briefcase") || normalized.includes("building")) return "▣";
+  if (
+    normalized.includes("package") ||
+    normalized.includes("truck") ||
+    normalized.includes("briefcase") ||
+    normalized.includes("building")
+  )
+    return "▣";
   if (normalized.includes("money")) return "$";
   if (normalized.includes("spark") || normalized.includes("magic")) return "✦";
   return "•";
@@ -2200,14 +2356,16 @@ function normalizeFluentIconName(rawName: string): string {
 
 function loadFluentIconNameCatalog(): string[] {
   try {
-    const regular = require("../../node_modules/@fluentui/react-icons/lib-cjs/utils/fonts/FluentSystemIcons-Regular.json") as Record<
-      string,
-      number
-    >;
-    const resizable = require("../../node_modules/@fluentui/react-icons/lib-cjs/utils/fonts/FluentSystemIcons-Resizable.json") as Record<
-      string,
-      number
-    >;
+    const regular =
+      require("../../node_modules/@fluentui/react-icons/lib-cjs/utils/fonts/FluentSystemIcons-Regular.json") as Record<
+        string,
+        number
+      >;
+    const resizable =
+      require("../../node_modules/@fluentui/react-icons/lib-cjs/utils/fonts/FluentSystemIcons-Resizable.json") as Record<
+        string,
+        number
+      >;
     const unique = new Set<string>();
     [...Object.keys(regular), ...Object.keys(resizable)].forEach((name) => {
       const normalized = normalizeFluentIconName(name);
@@ -2221,11 +2379,12 @@ function loadFluentIconNameCatalog(): string[] {
   }
 }
 
-export const SHAPE_BUILDER_ICON_OPTIONS: ShapeBuilderIconOption[] = RAW_SHAPE_BUILDER_ICON_OPTIONS.map((option) => ({
-  ...option,
-  symbol: toExcelSafeIconSymbol(option.key, option.symbol),
-  keywords: buildShapeBuilderIconKeywords(option),
-}));
+export const SHAPE_BUILDER_ICON_OPTIONS: ShapeBuilderIconOption[] =
+  RAW_SHAPE_BUILDER_ICON_OPTIONS.map((option) => ({
+    ...option,
+    symbol: toExcelSafeIconSymbol(option.key, option.symbol),
+    keywords: buildShapeBuilderIconKeywords(option),
+  }));
 
 export const FLUENT_ICON_NAME_CATALOG: string[] = loadFluentIconNameCatalog();
 
@@ -2243,6 +2402,7 @@ interface ShapeBuilderMetadata {
   internalDestinationId: string;
   externalUrl: string;
   effect: ShapeBuilderEffect;
+  anchorAddress: string;
 }
 
 const DEFAULT_SHAPE_BUILDER_METADATA: ShapeBuilderMetadata = {
@@ -2251,6 +2411,7 @@ const DEFAULT_SHAPE_BUILDER_METADATA: ShapeBuilderMetadata = {
   internalDestinationId: "",
   externalUrl: "",
   effect: "None",
+  anchorAddress: "",
 };
 
 function sanitizeHexColor(value: string, fallback: string): string {
@@ -2265,7 +2426,9 @@ function normalizeShapeBuilderFillColor(value: string, fallback: string): string
   if (isNoFillColor(value)) {
     return NO_FILL_COLOR_TOKEN;
   }
-  const normalizedFallback = isNoFillColor(fallback) ? "#A8D5AD" : sanitizeHexColor(fallback, "#A8D5AD");
+  const normalizedFallback = isNoFillColor(fallback)
+    ? "#A8D5AD"
+    : sanitizeHexColor(fallback, "#A8D5AD");
   return sanitizeHexColor(value, normalizedFallback);
 }
 
@@ -2320,7 +2483,9 @@ function normalizeShapeBuilderEffect(value: string): ShapeBuilderEffect {
   return value === "Shadow" ? "Shadow" : "None";
 }
 
-function normalizeShapeBuilderTextHorizontalAlignment(value: string): ShapeBuilderTextHorizontalAlignment {
+function normalizeShapeBuilderTextHorizontalAlignment(
+  value: string
+): ShapeBuilderTextHorizontalAlignment {
   const normalized = value.trim().toLowerCase();
   if (normalized === "center") {
     return "Center";
@@ -2331,7 +2496,9 @@ function normalizeShapeBuilderTextHorizontalAlignment(value: string): ShapeBuild
   return "Left";
 }
 
-function normalizeShapeBuilderTextVerticalAlignment(value: string): ShapeBuilderTextVerticalAlignment {
+function normalizeShapeBuilderTextVerticalAlignment(
+  value: string
+): ShapeBuilderTextVerticalAlignment {
   const normalized = value.trim().toLowerCase();
   if (normalized === "top") {
     return "Top";
@@ -2400,8 +2567,14 @@ function getShapeBuilderDisplayTextOffset(displayText: string, iconKey: string):
   return 0;
 }
 
-function parseShapeBuilderMetadata(titleText: string, descriptionText: string): ShapeBuilderMetadata {
+function parseShapeBuilderMetadata(
+  titleText: string,
+  descriptionText: string
+): ShapeBuilderMetadata {
   const defaultFromDescription = (() => {
+    const anchorAddress = descriptionText.startsWith(SHAPE_ANCHOR_PREFIX)
+      ? descriptionText.slice(SHAPE_ANCHOR_PREFIX.length).trim()
+      : "";
     const target = descriptionText.startsWith(NAV_TARGET_PREFIX)
       ? descriptionText.slice(NAV_TARGET_PREFIX.length).trim()
       : "";
@@ -2410,6 +2583,7 @@ function parseShapeBuilderMetadata(titleText: string, descriptionText: string): 
         ...DEFAULT_SHAPE_BUILDER_METADATA,
         linkType: "External" as ShapeBuilderLinkType,
         externalUrl: target.slice("url::".length).trim(),
+        anchorAddress,
       };
     }
     if (target) {
@@ -2417,9 +2591,10 @@ function parseShapeBuilderMetadata(titleText: string, descriptionText: string): 
         ...DEFAULT_SHAPE_BUILDER_METADATA,
         linkType: "Internal" as ShapeBuilderLinkType,
         internalDestinationId: target,
+        anchorAddress,
       };
     }
-    return { ...DEFAULT_SHAPE_BUILDER_METADATA };
+    return { ...DEFAULT_SHAPE_BUILDER_METADATA, anchorAddress };
   })();
 
   if (!titleText.startsWith(SHAPE_BUILDER_META_PREFIX)) {
@@ -2429,13 +2604,19 @@ function parseShapeBuilderMetadata(titleText: string, descriptionText: string): 
   try {
     const raw = JSON.parse(titleText.slice(SHAPE_BUILDER_META_PREFIX.length));
     const asObject = raw as Partial<ShapeBuilderMetadata>;
-    const linkType = normalizeShapeBuilderLinkType(asString(asObject.linkType, defaultFromDescription.linkType));
+    const linkType = normalizeShapeBuilderLinkType(
+      asString(asObject.linkType, defaultFromDescription.linkType)
+    );
     const metadata: ShapeBuilderMetadata = {
       iconKey: asString(asObject.iconKey, defaultFromDescription.iconKey).trim() || "none",
       linkType,
-      internalDestinationId: asString(asObject.internalDestinationId, defaultFromDescription.internalDestinationId).trim(),
+      internalDestinationId: asString(
+        asObject.internalDestinationId,
+        defaultFromDescription.internalDestinationId
+      ).trim(),
       externalUrl: asString(asObject.externalUrl, defaultFromDescription.externalUrl).trim(),
       effect: normalizeShapeBuilderEffect(asString(asObject.effect, defaultFromDescription.effect)),
+      anchorAddress: asString(asObject.anchorAddress, defaultFromDescription.anchorAddress).trim(),
     };
     if (metadata.linkType !== "Internal") {
       metadata.internalDestinationId = "";
@@ -2457,6 +2638,7 @@ function applyShapeBuilderMetadata(shape: Excel.Shape, metadataInput: ShapeBuild
     internalDestinationId: metadataInput.internalDestinationId.trim(),
     externalUrl: metadataInput.externalUrl.trim(),
     effect: normalizeShapeBuilderEffect(metadataInput.effect),
+    anchorAddress: metadataInput.anchorAddress.trim(),
   };
 
   if (metadata.linkType !== "Internal") {
@@ -2473,6 +2655,10 @@ function applyShapeBuilderMetadata(shape: Excel.Shape, metadataInput: ShapeBuild
   }
   if (metadata.linkType === "External" && metadata.externalUrl) {
     shape.altTextDescription = `${NAV_TARGET_PREFIX}url::${metadata.externalUrl}`;
+    return;
+  }
+  if (metadata.anchorAddress) {
+    shape.altTextDescription = `${SHAPE_ANCHOR_PREFIX}${metadata.anchorAddress}`;
     return;
   }
   shape.altTextDescription = "";
@@ -2505,6 +2691,7 @@ function buildShapeBuilderRecord(sheetName: string, shape: Excel.Shape): ShapeBu
     sheetName,
     shapeName: shape.name,
     shapeType: inferInsertableShapeType(asString(shape.geometricShapeType), asString(shape.type)),
+    anchorAddress: metadata.anchorAddress,
     text,
     iconKey: metadata.iconKey,
     fillColor,
@@ -2519,8 +2706,12 @@ function buildShapeBuilderRecord(sheetName: string, shape: Excel.Shape): ShapeBu
     fontSize: asNumber(shape.textFrame.textRange.font.size, 16),
     bold: asBoolean(shape.textFrame.textRange.font.bold, true),
     italic: asBoolean(shape.textFrame.textRange.font.italic, false),
-    textHorizontalAlignment: normalizeShapeBuilderTextHorizontalAlignment(asString(shape.textFrame.horizontalAlignment)),
-    textVerticalAlignment: normalizeShapeBuilderTextVerticalAlignment(asString(shape.textFrame.verticalAlignment)),
+    textHorizontalAlignment: normalizeShapeBuilderTextHorizontalAlignment(
+      asString(shape.textFrame.horizontalAlignment)
+    ),
+    textVerticalAlignment: normalizeShapeBuilderTextVerticalAlignment(
+      asString(shape.textFrame.verticalAlignment)
+    ),
     linkType: metadata.linkType,
     internalDestinationId: metadata.internalDestinationId,
     externalUrl: metadata.externalUrl,
@@ -2566,7 +2757,9 @@ export async function listShapeBuilderShapes(): Promise<ShapeBuilderShapeRecord[
   });
 }
 
-export async function createShapeBuilderShape(request: CreateShapeBuilderShapeRequest): Promise<ShapeBuilderShapeRecord> {
+export async function createShapeBuilderShape(
+  request: CreateShapeBuilderShapeRequest
+): Promise<ShapeBuilderShapeRecord> {
   return Excel.run(async (context) => {
     const sheet = context.workbook.worksheets.getActiveWorksheet();
     sheet.load("name");
@@ -2579,10 +2772,14 @@ export async function createShapeBuilderShape(request: CreateShapeBuilderShapeRe
     if (typeof request.top !== "number") {
       const navShapes = shapes.items.filter((shape) => {
         const title = asString(shape.altTextTitle);
-        return title.startsWith(SHAPE_BUILDER_META_PREFIX) || shape.name.startsWith(NAV_SHAPE_PREFIX);
+        return (
+          title.startsWith(SHAPE_BUILDER_META_PREFIX) || shape.name.startsWith(NAV_SHAPE_PREFIX)
+        );
       });
       if (navShapes.length > 0) {
-        const maxBottom = Math.max(...navShapes.map((shape) => asNumber(shape.top, 0) + asNumber(shape.height, 60)));
+        const maxBottom = Math.max(
+          ...navShapes.map((shape) => asNumber(shape.top, 0) + asNumber(shape.height, 60))
+        );
         top = maxBottom + 16;
       }
     }
@@ -2600,7 +2797,11 @@ export async function createShapeBuilderShape(request: CreateShapeBuilderShapeRe
     shape.top = Math.max(0, top);
     shape.width = Math.max(80, asNumber(request.width, 160));
     shape.height = Math.max(24, asNumber(request.height, 60));
-    const normalizedFillColor = applyShapeBuilderFill(shape, asString(request.fillColor, "#A8D5AD"), "#A8D5AD");
+    const normalizedFillColor = applyShapeBuilderFill(
+      shape,
+      asString(request.fillColor, "#A8D5AD"),
+      "#A8D5AD"
+    );
     shape.lineFormat.color = sanitizeHexColor(request.outlineColor, "#8CBF95");
     shape.lineFormat.weight = Math.max(0, asNumber(request.outlineWidth, 2));
     shape.textFrame.textRange.font.color = sanitizeHexColor(request.fontColor, "#1F2937");
@@ -2622,6 +2823,7 @@ export async function createShapeBuilderShape(request: CreateShapeBuilderShapeRe
       internalDestinationId: request.internalDestinationId,
       externalUrl: request.externalUrl,
       effect: request.effect,
+      anchorAddress: asString(request.anchorAddress, ""),
     });
     await syncShapeBuilderShadow(context, sheet, {
       shapeName,
@@ -2658,9 +2860,8 @@ export async function updateShapeBuilderShape(
       if (nextShapeType === "TextBox" || existing.shapeType === "TextBox") {
         throw new Error("Switching between Text Box and geometric shape is not supported.");
       }
-      (shape as unknown as { geometricShapeType: Excel.GeometricShapeType }).geometricShapeType = toGeometricShapeType(
-        nextShapeType
-      );
+      (shape as unknown as { geometricShapeType: Excel.GeometricShapeType }).geometricShapeType =
+        toGeometricShapeType(nextShapeType);
     }
 
     shape.left = Math.max(0, asNumber(updates.left, existing.left));
@@ -2672,13 +2873,19 @@ export async function updateShapeBuilderShape(
       asString(updates.fillColor, existing.fillColor),
       existing.fillColor
     );
-    shape.lineFormat.color = sanitizeHexColor(asString(updates.outlineColor, existing.outlineColor), existing.outlineColor);
+    shape.lineFormat.color = sanitizeHexColor(
+      asString(updates.outlineColor, existing.outlineColor),
+      existing.outlineColor
+    );
     shape.lineFormat.weight = Math.max(0, asNumber(updates.outlineWidth, existing.outlineWidth));
     shape.textFrame.textRange.font.color = sanitizeHexColor(
       asString(updates.fontColor, existing.fontColor),
       existing.fontColor
     );
-    shape.textFrame.textRange.font.size = Math.max(8, asNumber(updates.fontSize, existing.fontSize));
+    shape.textFrame.textRange.font.size = Math.max(
+      8,
+      asNumber(updates.fontSize, existing.fontSize)
+    );
     shape.textFrame.textRange.font.bold = asBoolean(updates.bold, existing.bold);
     shape.textFrame.textRange.font.italic = asBoolean(updates.italic, existing.italic);
     shape.textFrame.horizontalAlignment = normalizeShapeBuilderTextHorizontalAlignment(
@@ -2691,9 +2898,13 @@ export async function updateShapeBuilderShape(
     const nextMetadata: ShapeBuilderMetadata = {
       iconKey: asString(updates.iconKey, existing.iconKey).trim() || "none",
       linkType: normalizeShapeBuilderLinkType(asString(updates.linkType, existing.linkType)),
-      internalDestinationId: asString(updates.internalDestinationId, existing.internalDestinationId).trim(),
+      internalDestinationId: asString(
+        updates.internalDestinationId,
+        existing.internalDestinationId
+      ).trim(),
       externalUrl: asString(updates.externalUrl, existing.externalUrl).trim(),
       effect: normalizeShapeBuilderEffect(asString(updates.effect, existing.effect)),
+      anchorAddress: asString(updates.anchorAddress, existing.anchorAddress).trim(),
     };
     if (nextMetadata.linkType !== "Internal") {
       nextMetadata.internalDestinationId = "";
@@ -2814,7 +3025,8 @@ export async function duplicateShapeBuilderShape(
     duplicated.textFrame.textRange.font.italic = source.italic;
     duplicated.textFrame.horizontalAlignment =
       source.textHorizontalAlignment as unknown as Excel.ShapeTextHorizontalAlignment;
-    duplicated.textFrame.verticalAlignment = source.textVerticalAlignment as unknown as Excel.ShapeTextVerticalAlignment;
+    duplicated.textFrame.verticalAlignment =
+      source.textVerticalAlignment as unknown as Excel.ShapeTextVerticalAlignment;
     duplicated.textFrame.textRange.text = buildShapeBuilderDisplayText(source.iconKey, source.text);
     duplicated.placement = Excel.Placement.oneCell;
     applyShapeBuilderMetadata(duplicated, {
@@ -2823,6 +3035,7 @@ export async function duplicateShapeBuilderShape(
       internalDestinationId: source.internalDestinationId,
       externalUrl: source.externalUrl,
       effect: source.effect,
+      anchorAddress: source.anchorAddress,
     });
     await syncShapeBuilderShadow(context, sheet, {
       shapeName: duplicated.name,
@@ -2964,6 +3177,15 @@ export async function getCurrentSelectionAddress(): Promise<{ address: string; s
       address: range.address,
       sheet: range.worksheet.name,
     };
+  });
+}
+
+export async function activateWorksheet(sheetName: string): Promise<void> {
+  await Excel.run(async (context) => {
+    const sheet = context.workbook.worksheets.getItem(sheetName);
+    sheet.activate();
+    sheet.getRange("A1").select();
+    await context.sync();
   });
 }
 
@@ -3184,6 +3406,93 @@ export async function getTables(): Promise<TableRecord[]> {
   });
 }
 
+export async function selectTableRange(sheetName: string, tableName: string): Promise<void> {
+  await Excel.run(async (context) => {
+    const sheet = context.workbook.worksheets.getItem(sheetName);
+    const table = sheet.tables.getItem(tableName);
+    const range = table.getRange();
+    sheet.activate();
+    range.select();
+    await context.sync();
+  });
+}
+
+export async function getTableFromCurrentSelection(): Promise<TableRecord | null> {
+  return Excel.run(async (context) => {
+    const selection = context.workbook.getSelectedRange();
+    selection.load("worksheet/name");
+
+    const tableMatches = selection.getTables(false);
+    tableMatches.load("items");
+    tableMatches.load("items/name");
+    await context.sync();
+
+    const matchedTables = tableMatches.items;
+    if (matchedTables.length === 0) {
+      return null;
+    }
+
+    const [table] = matchedTables;
+    const range = table.getRange();
+    range.load("address");
+    await context.sync();
+
+    const normalizedAddress = range.address.includes("!")
+      ? range.address.split("!").slice(1).join("!")
+      : range.address;
+
+    return {
+      id: `${selection.worksheet.name}::${table.name}`,
+      name: table.name,
+      address: `${quoteSheetName(selection.worksheet.name)}!${normalizedAddress}`,
+      sheet: selection.worksheet.name,
+      scope: "Worksheet",
+    };
+  });
+}
+
+export async function getTableColumns(
+  sheetName: string,
+  tableName: string
+): Promise<TableColumnRecord[]> {
+  return Excel.run(async (context) => {
+    const sheet = context.workbook.worksheets.getItem(sheetName);
+    const table = sheet.tables.getItem(tableName);
+    table.load("columns");
+    await context.sync();
+
+    const columns = table.columns;
+    columns.load("items");
+    columns.load("items/name");
+    await context.sync();
+
+    const columnRanges = columns.items.map((column) => {
+      let range: Excel.Range;
+      try {
+        range = column.getDataBodyRange();
+      } catch {
+        range = column.getRange();
+      }
+      range.load("address");
+      return { column, range };
+    });
+    await context.sync();
+
+    return columnRanges.map(({ column, range }) => {
+      const normalizedAddress = range.address.includes("!")
+        ? range.address.split("!").slice(1).join("!")
+        : range.address;
+      return {
+        id: `${sheetName}::${tableName}::${column.name}`,
+        tableName,
+        name: column.name,
+        address: `${quoteSheetName(sheetName)}!${normalizedAddress}`,
+        sheet: sheetName,
+      };
+    });
+  });
+}
+
 export async function saveNamedFunction(name: string, lambdaFormula: string) {
   const trimmedName = name.trim();
   if (!trimmedName) {
@@ -3221,7 +3530,9 @@ export async function listWorkbookQueries(): Promise<WorkbookQueryRecord[]> {
 
   return Excel.run(async (context) => {
     const queries = context.workbook.queries;
-    queries.load("items/name,items/loadedTo,items/loadedToDataModel,items/refreshDate,items/rowsLoadedCount,items/error");
+    queries.load(
+      "items/name,items/loadedTo,items/loadedToDataModel,items/refreshDate,items/rowsLoadedCount,items/error"
+    );
     await context.sync();
 
     return queries.items
@@ -3230,7 +3541,8 @@ export async function listWorkbookQueries(): Promise<WorkbookQueryRecord[]> {
           query.refreshDate instanceof Date && !Number.isNaN(query.refreshDate.valueOf())
             ? query.refreshDate.toLocaleString()
             : "";
-        const error = query.error && query.error !== Excel.QueryError.none ? String(query.error) : "";
+        const error =
+          query.error && query.error !== Excel.QueryError.none ? String(query.error) : "";
         return {
           name: query.name,
           loadedTo: String(query.loadedTo || ""),
@@ -3240,7 +3552,9 @@ export async function listWorkbookQueries(): Promise<WorkbookQueryRecord[]> {
           error,
         } as WorkbookQueryRecord;
       })
-      .sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base" }));
+      .sort((left, right) =>
+        left.name.localeCompare(right.name, undefined, { sensitivity: "base" })
+      );
   });
 }
 
@@ -3276,7 +3590,8 @@ export async function applyModelBuilderParameters(
   request: ModelBuilderApplyRequest
 ): Promise<ModelBuilderApplyResult> {
   const parameters = request.parameters.filter(
-    (item) => item.label.trim() || item.desiredName.trim() || item.value.trim() || item.listValues.trim()
+    (item) =>
+      item.label.trim() || item.desiredName.trim() || item.value.trim() || item.listValues.trim()
   );
   if (parameters.length === 0) {
     throw new Error("Add at least one parameter before applying.");
@@ -3284,7 +3599,8 @@ export async function applyModelBuilderParameters(
 
   return Excel.run(async (context) => {
     const sheet = context.workbook.worksheets.getItem(request.anchorSheet);
-    const anchorAddress = splitQualifiedAddress(request.anchorAddress).address || request.anchorAddress;
+    const anchorAddress =
+      splitQualifiedAddress(request.anchorAddress).address || request.anchorAddress;
     const anchorCell = sheet.getRange(anchorAddress).getCell(0, 0);
     anchorCell.load("rowIndex,columnIndex,address,worksheet/name");
 
@@ -3306,7 +3622,9 @@ export async function applyModelBuilderParameters(
     metaUsedRange.load("columnCount");
     await context.sync();
 
-    let listColumnCursor = metaUsedRange.isNullObject ? 3 : Math.max(metaUsedRange.columnCount + 1, 3);
+    let listColumnCursor = metaUsedRange.isNullObject
+      ? 3
+      : Math.max(metaUsedRange.columnCount + 1, 3);
     const takenNames = new Set<string>(workbookNames.items.map((item) => item.name.toUpperCase()));
     const created: ModelBuilderApplyResult["created"] = [];
 
@@ -3328,7 +3646,10 @@ export async function applyModelBuilderParameters(
       const preferredName = toModelSafeName(parameter.desiredName.trim() || label);
       const finalName = toUniqueName(preferredName, takenNames);
       const valueAddress = toAbsoluteCellAddress(rowIndex, anchorCell.columnIndex + 1);
-      context.workbook.names.add(finalName, `=${quoteSheetName(anchorCell.worksheet.name)}!${valueAddress}`);
+      context.workbook.names.add(
+        finalName,
+        `=${quoteSheetName(anchorCell.worksheet.name)}!${valueAddress}`
+      );
 
       let validationListName: string | undefined;
       const listValues = parseInlineListValues(parameter.listValues);
@@ -3405,6 +3726,91 @@ export async function updateTableName(sheetName: string, oldName: string, newNam
     await syncWorkbookTablesNamedRange(context, records);
 
     await context.sync();
+  });
+}
+
+export async function selectTableAddress(address: string, fallbackSheet: string) {
+  await Excel.run(async (context) => {
+    const parsed = getSheetAndAddress(address, fallbackSheet);
+    const range = context.workbook.worksheets.getItem(parsed.sheet).getRange(parsed.address);
+    range.select();
+    await context.sync();
+  });
+}
+
+export async function getTableColumns(sheetName: string, tableName: string): Promise<TableColumnRecord[]> {
+  return Excel.run(async (context) => {
+    const sheet = context.workbook.worksheets.getItem(sheetName);
+    const table = sheet.tables.getItem(tableName);
+    table.columns.load("items/name");
+    await context.sync();
+
+    const ranges = table.columns.items.map((column) => {
+      const bodyRange = column.getDataBodyRange();
+      bodyRange.load("address");
+      return { column, bodyRange };
+    });
+    await context.sync();
+
+    return ranges.map((item) => ({
+      id: `${sheetName}::${tableName}::${item.column.name}`,
+      name: item.column.name,
+      address: item.bodyRange.address,
+    }));
+  });
+}
+
+export async function createNamedRangesFromTableColumns(
+  request: CreateNamedRangesFromTableRequest
+): Promise<{ created: string[]; skipped: string[] }> {
+  return Excel.run(async (context) => {
+    const table = context.workbook.worksheets.getItem(request.sheetName).tables.getItem(request.tableName);
+    table.columns.load("items/name");
+
+    const workbookNames = context.workbook.names;
+    workbookNames.load("items/name");
+
+    const sheetNames = context.workbook.worksheets.getItem(request.sheetName).names;
+    sheetNames.load("items/name");
+    await context.sync();
+
+    const targetCollection = request.scopeType === "Workbook" ? workbookNames : sheetNames;
+    const taken = new Set(targetCollection.items.map((item) => item.name.toUpperCase()));
+    const created: string[] = [];
+    const skipped: string[] = [];
+
+    for (const columnName of request.columns) {
+      const column = table.columns.getItem(columnName);
+      const dataBodyRange = column.getDataBodyRange();
+      dataBodyRange.load("address");
+      await context.sync();
+
+      const normalizedBase = toModelSafeName(columnName);
+      const fallbackName = toModelSafeName(`${request.tableName}_${columnName}`);
+      let desiredName = normalizedBase || fallbackName;
+      const desiredUpper = desiredName.toUpperCase();
+      if (taken.has(desiredUpper)) {
+        const override = request.conflictValue.trim();
+        if (request.conflictMode === "prefix" && override) {
+          desiredName = toModelSafeName(`${override}${desiredName}`);
+        } else if (request.conflictMode === "suffix" && override) {
+          desiredName = toModelSafeName(`${desiredName}${override}`);
+        } else if (request.conflictMode === "rename" && override) {
+          desiredName = toModelSafeName(override);
+        } else {
+          skipped.push(columnName);
+          continue;
+        }
+      }
+
+      const finalName = toUniqueName(desiredName || fallbackName, taken);
+      targetCollection.add(finalName, `=${dataBodyRange.address}`);
+      taken.add(finalName.toUpperCase());
+      created.push(finalName);
+    }
+
+    await context.sync();
+    return { created, skipped };
   });
 }
 
@@ -3486,7 +3892,9 @@ export async function evaluateFormula(formulaText: string): Promise<FormulaEvalu
     const valueTypes = (output.valueTypes as Excel.RangeValueType[][]).map((row) =>
       row.map((item) => String(item))
     );
-    const hasError = valueTypes.some((row) => row.some((item) => item === Excel.RangeValueType.error || item === "Error"));
+    const hasError = valueTypes.some((row) =>
+      row.some((item) => item === Excel.RangeValueType.error || item === "Error")
+    );
     const result: FormulaEvaluationResult = {
       address: output.address,
       values,
@@ -3639,12 +4047,15 @@ export async function getShapeEditorRecord(
     const sheet = context.workbook.worksheets.getItem(sheetName);
     const shape = sheet.shapes.getItem(shapeName);
     shape.load(
-      "name,left,top,zOrderPosition,width,height,rotation,lockAspectRatio,geometricShapeType,altTextDescription,fill/foregroundColor,fill/transparency,lineFormat/color,lineFormat/weight,textFrame/horizontalAlignment,textFrame/verticalAlignment,textFrame/textRange/text,textFrame/textRange/font/color,textFrame/textRange/font/size,textFrame/textRange/font/bold,textFrame/textRange/font/italic"
+      "name,left,top,zOrderPosition,width,height,rotation,lockAspectRatio,geometricShapeType,altTextDescription,altTextTitle,fill/foregroundColor,fill/transparency,lineFormat/color,lineFormat/weight,textFrame/horizontalAlignment,textFrame/verticalAlignment,textFrame/textRange/text,textFrame/textRange/font/color,textFrame/textRange/font/size,textFrame/textRange/font/bold,textFrame/textRange/font/italic"
     );
     await context.sync();
 
     const fillColor = shape.fill.foregroundColor ? shape.fill.foregroundColor : NO_FILL_COLOR_TOKEN;
-    const anchorAddress = extractShapeAnchorAddress(shape.altTextDescription);
+    const anchorAddress = parseShapeBuilderMetadata(
+      asString(shape.altTextTitle),
+      asString(shape.altTextDescription)
+    ).anchorAddress;
 
     return {
       name: shape.name,
@@ -3733,15 +4144,17 @@ export async function setShapeGeometricType(
 ) {
   await Excel.run(async (context) => {
     const shape = context.workbook.worksheets.getItem(sheetName).shapes.getItem(shapeName);
-    const geometricMap: Record<Exclude<InsertableShapeType, "TextBox">, Excel.GeometricShapeType> =
-      {
-        Rectangle: Excel.GeometricShapeType.rectangle,
-        RoundedRectangle: "Round2SameRectangle" as unknown as Excel.GeometricShapeType,
-        Chevron: "Chevron" as unknown as Excel.GeometricShapeType,
-        Hexagon: "Hexagon" as unknown as Excel.GeometricShapeType,
-        Diamond: "Diamond" as unknown as Excel.GeometricShapeType,
-        Oval: "Oval" as unknown as Excel.GeometricShapeType,
-      };
+    const geometricMap: Record<
+      Exclude<InsertableShapeType, "TextBox">,
+      Excel.GeometricShapeType
+    > = {
+      Rectangle: Excel.GeometricShapeType.rectangle,
+      RoundedRectangle: "Round2SameRectangle" as unknown as Excel.GeometricShapeType,
+      Chevron: "Chevron" as unknown as Excel.GeometricShapeType,
+      Hexagon: "Hexagon" as unknown as Excel.GeometricShapeType,
+      Diamond: "Diamond" as unknown as Excel.GeometricShapeType,
+      Oval: "Oval" as unknown as Excel.GeometricShapeType,
+    };
     (shape as unknown as { geometricShapeType: Excel.GeometricShapeType }).geometricShapeType =
       geometricMap[shapeType] ?? Excel.GeometricShapeType.rectangle;
     await context.sync();
@@ -3797,6 +4210,7 @@ export async function moveShapeToSelection(
     const oldParsed = splitQualifiedAddress(oldAnchorAddress);
     const oldAnchor = sheet.getRange(oldParsed.address || oldAnchorAddress).getCell(0, 0);
 
+    shape.load("altTextDescription,altTextTitle");
     selected.load("left,top");
     selectedCell.load("address");
     oldAnchor.load("address");
@@ -3811,7 +4225,14 @@ export async function moveShapeToSelection(
       selectedCell.copyFrom(oldAnchor, Excel.RangeCopyType.all);
       oldAnchor.clear(Excel.ClearApplyTo.contents);
     }
-    shape.altTextDescription = `${SHAPE_ANCHOR_PREFIX}${targetAddress}`;
+    const existingMetadata = parseShapeBuilderMetadata(
+      asString(shape.altTextTitle),
+      asString(shape.altTextDescription)
+    );
+    applyShapeBuilderMetadata(shape, {
+      ...existingMetadata,
+      anchorAddress: targetAddress,
+    });
 
     await context.sync();
     return { anchorAddress: targetAddress };
@@ -3907,21 +4328,21 @@ export async function openFormatEditorPopout(): Promise<void> {
   });
 }
 
-export async function openFormulaEditorPopout(
-  initialState?: {
-    formula: string;
-    name?: string;
-    entryType?: "Formula" | "Function" | "List";
-    functionArgs?: string;
-    description?: string;
-    creationMode?: "Formula" | "Function";
-    authoringMode?: "Editor" | "Wizard";
-    wizardTemplate?: "LAMBDA" | "LET";
-    wizardArgs?: string;
-    wizardReturnExpression?: string;
-    wizardVariables?: Array<{ name: string; expression: string }>;
-  }
-): Promise<void> {
+export async function openFormulaEditorPopout(initialState?: {
+  formula: string;
+  name?: string;
+  entryType?: "Formula" | "Function" | "List";
+  functionArgs?: string;
+  description?: string;
+  creationMode?: "Formula" | "Function";
+  authoringMode?: "Editor" | "Wizard";
+  wizardTemplate?: "LAMBDA" | "LET";
+  wizardArgs?: string;
+  wizardReturnExpression?: string;
+  wizardVariables?: Array<{ name: string; expression: string }>;
+  activeSubTab?: "metadata" | "lambda-test" | "editor" | "wizard" | "live-output";
+  lambdaTestInputs?: string[];
+}): Promise<void> {
   const url = `${window.location.origin}/taskpane.html?popout=formula`;
   if (formulaEditorDialog) {
     try {
@@ -3948,18 +4369,20 @@ export async function openFormulaEditorPopout(
             ? {
                 channel: FORMULA_DIALOG_RPC_CHANNEL,
                 type: "open-formula",
-              formula: initialState.formula.trim(),
-              name: initialState.name?.trim() || undefined,
-              entryType: initialState.entryType,
-              functionArgs: initialState.functionArgs,
-              description: initialState.description,
-              creationMode: initialState.creationMode,
-              authoringMode: initialState.authoringMode,
-              wizardTemplate: initialState.wizardTemplate,
-              wizardArgs: initialState.wizardArgs,
-              wizardReturnExpression: initialState.wizardReturnExpression,
-              wizardVariables: initialState.wizardVariables,
-            }
+                formula: initialState.formula.trim(),
+                name: initialState.name?.trim() || undefined,
+                entryType: initialState.entryType,
+                functionArgs: initialState.functionArgs,
+                description: initialState.description,
+                creationMode: initialState.creationMode,
+                authoringMode: initialState.authoringMode,
+                wizardTemplate: initialState.wizardTemplate,
+                wizardArgs: initialState.wizardArgs,
+                wizardReturnExpression: initialState.wizardReturnExpression,
+                wizardVariables: initialState.wizardVariables,
+                activeSubTab: initialState.activeSubTab,
+                lambdaTestInputs: initialState.lambdaTestInputs,
+              }
             : null;
         const dispatchOpenMessage = () => {
           if (!pendingOpenMessage) {
@@ -3994,7 +4417,9 @@ export async function openFormulaEditorPopout(
               return;
             }
 
-            const data = payload as Partial<FormulaDialogEvalRequestMessage | FormulaDialogReadyMessage>;
+            const data = payload as Partial<
+              FormulaDialogEvalRequestMessage | FormulaDialogReadyMessage
+            >;
             if (data.channel !== FORMULA_DIALOG_RPC_CHANNEL || typeof data.type !== "string") {
               return;
             }

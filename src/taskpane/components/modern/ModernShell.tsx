@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useEffect, useMemo, useState } from "react";
-import { Button, Input, Text, makeStyles } from "@fluentui/react-components";
+import { Button, Text, makeStyles } from "@fluentui/react-components";
 import {
   BookNumber20Regular,
   Box20Regular,
@@ -77,26 +77,17 @@ const SECTION_TARGET_MAP: Record<WorkspaceId, Record<string, NavigationTarget>> 
   structure: {
     namedRanges: "names",
     tables: "tables",
-    bulkRename: "names",
-    cleanupGovernance: "names",
   },
   formulas: {
     formulaEditor: "formulas",
     evaluateTest: "formulas",
-    insertHelpers: "formulas",
-    namedFunctions: "formulas",
   },
   data: {
     queryStatus: "queries",
-    refreshQueries: "queries",
     pivotRefresh: "pivots",
-    errorsWarnings: "queries",
   },
   model: {
     parameterBuilder: "model-builder",
-    validationLists: "model-builder",
-    defaultFormulaValues: "model-builder",
-    applySummary: "model-builder",
   },
   layout: {
     gridFreeze: "format",
@@ -105,7 +96,6 @@ const SECTION_TARGET_MAP: Record<WorkspaceId, Record<string, NavigationTarget>> 
     debugUtilities: "sandbox-debug",
     settings: "settings",
     help: "help",
-    legacyCompatibility: "settings",
   },
 };
 
@@ -291,6 +281,10 @@ const useStyles = makeStyles({
     fontSize: "11px",
     lineHeight: "14px",
     color: MODERN_TOKENS.colorTextMuted,
+    "@media (max-width: 720px)": {
+      marginLeft: 0,
+      flexBasis: "100%",
+    },
   },
   sectionStack: {
     display: "grid",
@@ -375,15 +369,36 @@ const useStyles = makeStyles({
     display: "grid",
     gap: "8px",
   },
+  evaluateFormulaPreview: {
+    border: `1px solid ${MODERN_TOKENS.colorBorder}`,
+    borderRadius: "8px",
+    backgroundColor: "#F8FBFF",
+    padding: "10px 12px",
+    maxHeight: "180px",
+    overflow: "auto",
+  },
+  evaluateFormulaCode: {
+    fontFamily: "Consolas, 'Cascadia Mono', 'Courier New', monospace",
+    fontSize: "12px",
+    lineHeight: "1.65",
+    color: MODERN_TOKENS.colorText,
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+    margin: 0,
+  },
   evaluateRow: {
     display: "flex",
     alignItems: "center",
+    justifyContent: "space-between",
     gap: "8px",
     flexWrap: "wrap",
   },
-  evaluateInput: {
+  evaluateHint: {
     flex: 1,
-    minWidth: "220px",
+    minWidth: "180px",
+    fontSize: "11px",
+    lineHeight: "15px",
+    color: MODERN_TOKENS.colorTextMuted,
   },
   evaluateOutputWrap: {
     border: `1px solid ${MODERN_TOKENS.colorBorder}`,
@@ -448,17 +463,34 @@ const ModernShell: React.FC<ModernShellProps> = ({
   const styles = useStyles();
   const activeRoute = TARGET_ROUTE_MAP[activeTarget];
   const activeWorkspace = activeRoute.workspace;
-  const [expandedSections, setExpandedSections] = useState<Record<WorkspaceId, string[]>>(DEFAULT_EXPANDED_BY_WORKSPACE);
-  const [testFormulaCall, setTestFormulaCall] = useState<string>("");
+  const [expandedSections, setExpandedSections] = useState<Record<WorkspaceId, string[]>>(
+    DEFAULT_EXPANDED_BY_WORKSPACE
+  );
+  const [editorFormulaText, setEditorFormulaText] = useState<string>("");
   const [testFormulaOutput, setTestFormulaOutput] = useState<FormulaEvaluationResult | null>(null);
   const [testBusy, setTestBusy] = useState<boolean>(false);
   const [testStatus, setTestStatus] = useState<string>("");
   const [testStatusType, setTestStatusType] = useState<"success" | "error">("success");
+  const [lastEvaluatedFormula, setLastEvaluatedFormula] = useState<string>("");
+  const [formatSelectionRequest, setFormatSelectionRequest] = useState<{
+    requestId: number;
+    sheetName: string;
+    shapeName: string;
+  } | null>(null);
 
-  const normalizeError = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+  const normalizeError = (error: unknown): string =>
+    error instanceof Error ? error.message : String(error);
 
   const openLegacy = () => {
     onSwitchToLegacy();
+  };
+
+  const openShapeEditor = (request: { sheetName: string; shapeName: string }) => {
+    setFormatSelectionRequest((prev) => ({
+      requestId: (prev?.requestId ?? 0) + 1,
+      ...request,
+    }));
+    onTargetChange("format");
   };
 
   useEffect(() => {
@@ -472,7 +504,9 @@ const ModernShell: React.FC<ModernShellProps> = ({
         return prev;
       }
       const nextSections =
-        route.workspace === "formulas" ? [...current, route.sectionId].slice(-2) : [route.sectionId];
+        route.workspace === "formulas"
+          ? [...current, route.sectionId].slice(-2)
+          : [route.sectionId];
       return {
         ...prev,
         [route.workspace]: nextSections,
@@ -494,7 +528,8 @@ const ModernShell: React.FC<ModernShellProps> = ({
   };
 
   const openSection = (workspace: WorkspaceId, sectionId: string) => {
-    const nextTarget = SECTION_TARGET_MAP[workspace][sectionId] ?? DEFAULT_TARGET_BY_WORKSPACE[workspace];
+    const nextTarget =
+      SECTION_TARGET_MAP[workspace][sectionId] ?? DEFAULT_TARGET_BY_WORKSPACE[workspace];
     onTargetChange(nextTarget);
     setExpandedSections((prev) => {
       const current = prev[workspace];
@@ -516,7 +551,9 @@ const ModernShell: React.FC<ModernShellProps> = ({
       const isOpen = current.includes(sectionId);
       let nextSections: string[];
       if (workspace === "formulas") {
-        nextSections = isOpen ? current.filter((id) => id !== sectionId) : [...current, sectionId].slice(-2);
+        nextSections = isOpen
+          ? current.filter((id) => id !== sectionId)
+          : [...current, sectionId].slice(-2);
       } else {
         nextSections = isOpen ? [] : [sectionId];
       }
@@ -547,9 +584,12 @@ const ModernShell: React.FC<ModernShellProps> = ({
     options?: { count?: string; statusChip?: string }
   ) => {
     const expanded = isSectionExpanded(workspace, sectionId);
+    const triggerId = `${workspace}-${sectionId}-trigger`;
+    const panelId = `${workspace}-${sectionId}-panel`;
     return (
       <div className={styles.sectionCard} key={`${workspace}:${sectionId}`}>
         <button
+          id={triggerId}
           type="button"
           className={styles.sectionHeaderButton}
           onClick={() => {
@@ -559,7 +599,8 @@ const ModernShell: React.FC<ModernShellProps> = ({
               toggleSection(workspace, sectionId);
             }
           }}
-          aria-expanded={expanded}
+          aria-expanded={expanded ? "true" : "false"}
+          aria-controls={panelId}
         >
           <span className={styles.sectionHeaderMain}>
             <span className={styles.navIcon}>{icon}</span>
@@ -567,38 +608,40 @@ const ModernShell: React.FC<ModernShellProps> = ({
           </span>
           <span className={styles.sectionHeaderMeta}>
             {options?.count ? <span className={styles.sectionCount}>{options.count}</span> : null}
-            {options?.statusChip ? <span className={styles.sectionChip}>{options.statusChip}</span> : null}
+            {options?.statusChip ? (
+              <span className={styles.sectionChip}>{options.statusChip}</span>
+            ) : null}
             {expanded ? <ChevronDown20Regular /> : <ChevronRight20Regular />}
           </span>
         </button>
-        {expanded ? <div className={styles.sectionBody}>{content}</div> : null}
+        {expanded ? (
+          <div
+            id={panelId}
+            className={styles.sectionBody}
+            role="region"
+            aria-labelledby={triggerId}
+          >
+            {content}
+          </div>
+        ) : null}
       </div>
     );
   };
 
   const workspaceMeta = WORKSPACE_META[activeWorkspace];
 
-  const syncTestFormulaFromEditor = () => {
-    const fromEditor = formulaViewRef.current?.getCurrentFormula?.().trim() ?? "";
-    if (!fromEditor) {
-      setTestStatusType("error");
-      setTestStatus("Formula editor is empty.");
-      return "";
-    }
-    setTestFormulaCall(fromEditor);
-    return fromEditor;
-  };
-
   const executeFormulaTest = async (formulaToRun: string, silent: boolean): Promise<void> => {
     const normalized = formulaToRun.trim();
     if (!normalized) {
       setTestFormulaOutput(null);
+      setLastEvaluatedFormula("");
       if (!silent) {
         setTestStatusType("error");
         setTestStatus("Enter a formula to test.");
       }
       return;
     }
+    setLastEvaluatedFormula(normalized);
     setTestBusy(true);
     try {
       const result = await evaluateFormula(normalized);
@@ -617,82 +660,77 @@ const ModernShell: React.FC<ModernShellProps> = ({
   };
 
   const runManualFormulaTest = async () => {
-    const editorFormula = formulaViewRef.current?.getCurrentFormula?.().trim() ?? "";
-    const candidate = testFormulaCall.trim() || editorFormula;
+    const candidate =
+      editorFormulaText.trim() || formulaViewRef.current?.getCurrentFormula?.().trim() || "";
     if (!candidate) {
       setTestStatusType("error");
       setTestStatus("Formula editor is empty.");
       return;
     }
-    if (!testFormulaCall.trim()) {
-      setTestFormulaCall(candidate);
-    }
     await executeFormulaTest(candidate, false);
   };
 
   useEffect(() => {
-    if (activeWorkspace !== "formulas" || !isSectionExpanded("formulas", "evaluateTest")) {
-      return;
-    }
-    if (testFormulaCall.trim()) {
-      return;
-    }
-    const fromEditor = formulaViewRef.current?.getCurrentFormula?.().trim() ?? "";
-    if (fromEditor) {
-      setTestFormulaCall(fromEditor);
-    }
-  }, [activeWorkspace, expandedSections, testFormulaCall, formulaViewRef]);
-
-  useEffect(() => {
-    if (activeWorkspace !== "formulas" || !isSectionExpanded("formulas", "evaluateTest")) {
-      return undefined;
-    }
-    const formulaToRun = testFormulaCall.trim();
-    if (!formulaToRun) {
+    const normalized = editorFormulaText.trim();
+    if (!normalized) {
       setTestFormulaOutput(null);
-      return undefined;
+      setLastEvaluatedFormula("");
+      setTestStatus("");
+      return;
     }
-    const timerId = window.setTimeout(() => {
-      void executeFormulaTest(formulaToRun, true);
-    }, 450);
-    return () => {
-      window.clearTimeout(timerId);
-    };
-  }, [activeWorkspace, expandedSections, testFormulaCall]);
+    if (lastEvaluatedFormula && normalized !== lastEvaluatedFormula) {
+      setTestFormulaOutput(null);
+      setLastEvaluatedFormula("");
+      setTestStatusType("success");
+      setTestStatus("Formula editor changed. Click Calculate to refresh output.");
+    }
+  }, [editorFormulaText, lastEvaluatedFormula]);
 
   const workspacePrimaryAction = useMemo(() => {
     if (activeWorkspace === "structure") {
       return (
-        <Button size="small" appearance="primary" onClick={() => openSection("structure", "namedRanges")}>
-          Create
+        <Button
+          size="small"
+          appearance="primary"
+          onClick={() => openSection("structure", "namedRanges")}
+        >
+          Open Names
         </Button>
       );
     }
     if (activeWorkspace === "formulas") {
-      return (
-        <Button size="small" appearance="primary" onClick={() => runFormulaAction("pull")}>
-          Pull
-        </Button>
-      );
+      return null;
     }
     if (activeWorkspace === "data") {
       return (
-        <Button size="small" appearance="primary" onClick={() => openSection("data", "queryStatus")}>
-          Refresh All
+        <Button
+          size="small"
+          appearance="primary"
+          onClick={() => openSection("data", "queryStatus")}
+        >
+          Open Queries
         </Button>
       );
     }
     if (activeWorkspace === "model") {
       return (
-        <Button size="small" appearance="primary" onClick={() => openSection("model", "parameterBuilder")}>
-          Build
+        <Button
+          size="small"
+          appearance="primary"
+          onClick={() => openSection("model", "parameterBuilder")}
+        >
+          Open Builder
         </Button>
       );
     }
     if (activeWorkspace === "layout") {
       return (
-        <Button size="small" appearance="primary" onClick={() => openSection("layout", "gridFreeze")}>
-          Apply
+        <Button
+          size="small"
+          appearance="primary"
+          onClick={() => openSection("layout", "gridFreeze")}
+        >
+          Open Layout
         </Button>
       );
     }
@@ -703,13 +741,23 @@ const ModernShell: React.FC<ModernShellProps> = ({
     if (activeWorkspace === "structure") {
       return (
         <div className={styles.actionBar}>
-          <Button size="small" appearance={activeRoute.sectionId === "namedRanges" ? "primary" : "secondary"} onClick={() => openSection("structure", "namedRanges")}>
+          <Button
+            size="small"
+            appearance={activeRoute.sectionId === "namedRanges" ? "primary" : "secondary"}
+            onClick={() => openSection("structure", "namedRanges")}
+          >
             Named Ranges
           </Button>
-          <Button size="small" appearance={activeRoute.sectionId === "tables" ? "primary" : "secondary"} onClick={() => openSection("structure", "tables")}>
+          <Button
+            size="small"
+            appearance={activeRoute.sectionId === "tables" ? "primary" : "secondary"}
+            onClick={() => openSection("structure", "tables")}
+          >
             Tables
           </Button>
-          <Text className={styles.actionHint}>Use accordion sections to keep structure tasks compact.</Text>
+          <Text className={styles.actionHint}>
+            Bulk rename and cleanup tools stay inside the Names and Tables views.
+          </Text>
         </div>
       );
     }
@@ -717,63 +765,98 @@ const ModernShell: React.FC<ModernShellProps> = ({
       return (
         <div className={styles.actionBar}>
           <Button size="small" onClick={() => runFormulaAction("pull")}>
-            Pull
+            Pull Active Formula
           </Button>
           <Button size="small" onClick={() => runFormulaAction("apply")}>
-            Apply
+            Apply To Cell
           </Button>
           <Button size="small" onClick={() => runFormulaAction("beautify")}>
             Beautify
           </Button>
           <Button size="small" onClick={() => runFormulaAction("insertSelection")}>
-            Insert Selection
+            Use Current Selection
           </Button>
-          <Text className={styles.actionHint}>Cell context and diagnostics are inside Formula Editor.</Text>
+          <Text className={styles.actionHint}>
+            The formula editor is the source of truth. Calculate output below uses the current
+            editor text automatically.
+          </Text>
         </div>
       );
     }
     if (activeWorkspace === "data") {
       return (
         <div className={styles.actionBar}>
-          <Button size="small" appearance={activeRoute.sectionId === "queryStatus" ? "primary" : "secondary"} onClick={() => openSection("data", "queryStatus")}>
+          <Button
+            size="small"
+            appearance={activeRoute.sectionId === "queryStatus" ? "primary" : "secondary"}
+            onClick={() => openSection("data", "queryStatus")}
+          >
             Query Status
           </Button>
-          <Button size="small" appearance={activeRoute.sectionId === "pivotRefresh" ? "primary" : "secondary"} onClick={() => openSection("data", "pivotRefresh")}>
+          <Button
+            size="small"
+            appearance={activeRoute.sectionId === "pivotRefresh" ? "primary" : "secondary"}
+            onClick={() => openSection("data", "pivotRefresh")}
+          >
             Pivot Refresh
           </Button>
-          <Text className={styles.actionHint}>Refresh controls remain inside each data section.</Text>
+          <Text className={styles.actionHint}>
+            Query refresh, warnings, and diagnostics are inside Query Status.
+          </Text>
         </div>
       );
     }
     if (activeWorkspace === "model") {
       return (
         <div className={styles.actionBar}>
-          <Button size="small" appearance={activeRoute.sectionId === "parameterBuilder" ? "primary" : "secondary"} onClick={() => openSection("model", "parameterBuilder")}>
+          <Button
+            size="small"
+            appearance={activeRoute.sectionId === "parameterBuilder" ? "primary" : "secondary"}
+            onClick={() => openSection("model", "parameterBuilder")}
+          >
             Parameter Builder
           </Button>
-          <Text className={styles.actionHint}>Use one anchor and apply structured parameter rows.</Text>
+          <Text className={styles.actionHint}>
+            Validation lists, defaults, and the apply summary are part of the builder workflow.
+          </Text>
         </div>
       );
     }
     if (activeWorkspace === "layout") {
       return (
         <div className={styles.actionBar}>
-          <Button size="small" appearance="secondary" onClick={() => openSection("layout", "gridFreeze")}>
+          <Button
+            size="small"
+            appearance="secondary"
+            onClick={() => openSection("layout", "gridFreeze")}
+          >
             Gridlines and Freeze
           </Button>
-          <Text className={styles.actionHint}>Presentation helpers and templates are grouped below.</Text>
+          <Text className={styles.actionHint}>
+            Presentation helpers and templates are grouped below.
+          </Text>
         </div>
       );
     }
     return (
       <div className={styles.actionBar}>
-        <Button size="small" appearance={activeRoute.sectionId === "settings" ? "primary" : "secondary"} onClick={() => openSection("tools", "settings")}>
+        <Button
+          size="small"
+          appearance={activeRoute.sectionId === "settings" ? "primary" : "secondary"}
+          onClick={() => openSection("tools", "settings")}
+        >
           Settings
         </Button>
-        <Button size="small" appearance={activeRoute.sectionId === "help" ? "primary" : "secondary"} onClick={() => openSection("tools", "help")}>
+        <Button
+          size="small"
+          appearance={activeRoute.sectionId === "help" ? "primary" : "secondary"}
+          onClick={() => openSection("tools", "help")}
+        >
           Help
         </Button>
-        <Text className={styles.actionHint}>Diagnostics and compatibility tools stay in this workspace.</Text>
+        <Text className={styles.actionHint}>
+          Diagnostics, onboarding, and migration controls stay in this workspace.
+        </Text>
       </div>
     );
   };
@@ -782,34 +865,26 @@ const ModernShell: React.FC<ModernShellProps> = ({
     if (activeWorkspace === "structure") {
       return (
         <div className={styles.sectionStack}>
-          {renderSection("structure", "namedRanges", "Named Ranges", <BookNumber20Regular />, (
-            <NamesView createRequestId={createRequestId} onOpenLegacy={openLegacy} embedded />
-          ), { statusChip: "Active" })}
-          {renderSection("structure", "tables", "Tables", <Table20Regular />, (
+          {renderSection(
+            "structure",
+            "namedRanges",
+            "Named Ranges",
+            <BookNumber20Regular />,
+            <NamesView
+              createRequestId={createRequestId}
+              onOpenLegacy={openLegacy}
+              onOpenShape={openShapeEditor}
+              embedded
+            />,
+            { statusChip: "Active" }
+          )}
+          {renderSection(
+            "structure",
+            "tables",
+            "Tables",
+            <Table20Regular />,
             <TablesView onOpenLegacy={openLegacy} embedded />
-          ))}
-          {renderSection("structure", "bulkRename", "Bulk Rename", <TextAlignJustify20Regular />, (
-            <div className={styles.placeholder}>
-              <Text className={styles.placeholderText}>
-                Bulk rename is available in the Named Ranges and Tables sections. Open either section to run scoped batch changes.
-              </Text>
-              <div className={styles.placeholderActions}>
-                <Button size="small" onClick={() => openSection("structure", "namedRanges")}>
-                  Open Named Ranges
-                </Button>
-                <Button size="small" onClick={() => openSection("structure", "tables")}>
-                  Open Tables
-                </Button>
-              </div>
-            </div>
-          ))}
-          {renderSection("structure", "cleanupGovernance", "Cleanup and Governance", <Settings20Regular />, (
-            <div className={styles.placeholder}>
-              <Text className={styles.placeholderText}>
-                Use search, sort, type filtering, and bulk tools to maintain naming consistency across workbook assets.
-              </Text>
-            </div>
-          ))}
+          )}
         </div>
       );
     }
@@ -817,24 +892,43 @@ const ModernShell: React.FC<ModernShellProps> = ({
     if (activeWorkspace === "formulas") {
       return (
         <div className={styles.sectionStack}>
-          {renderSection("formulas", "formulaEditor", "Formula Editor", <DataArea20Regular />, (
-            <FormulaMonacoView ref={formulaViewRef} isPopout={false} onOpenLegacy={openLegacy} embedded />
-          ), { statusChip: "Live" })}
-          {renderSection("formulas", "evaluateTest", "Evaluate and Test", <DataPie20Regular />, (
+          {renderSection(
+            "formulas",
+            "formulaEditor",
+            "Formula Editor",
+            <DataArea20Regular />,
+            <FormulaMonacoView
+              ref={formulaViewRef}
+              isPopout={false}
+              onOpenLegacy={openLegacy}
+              embedded
+              onFormulaChange={setEditorFormulaText}
+            />,
+            { statusChip: "Live" }
+          )}
+          {renderSection(
+            "formulas",
+            "evaluateTest",
+            "Calculate Output",
+            <DataPie20Regular />,
             <div className={styles.evaluatePanel}>
-              <Text className={styles.placeholderText}>Current Formula / Function Call</Text>
+              <Text className={styles.placeholderText}>Editor Formula</Text>
+              <div className={styles.evaluateFormulaPreview}>
+                <pre className={styles.evaluateFormulaCode}>
+                  {editorFormulaText.trim() || "Formula editor is empty."}
+                </pre>
+              </div>
               <div className={styles.evaluateRow}>
-                <Input
-                  className={styles.evaluateInput}
-                  value={testFormulaCall}
-                  placeholder="=SUM(A1:A10)"
-                  onChange={(_, data) => setTestFormulaCall(data.value)}
-                />
-                <Button size="small" onClick={syncTestFormulaFromEditor}>
-                  Use Editor Formula
-                </Button>
-                <Button size="small" appearance="primary" onClick={() => void runManualFormulaTest()} disabled={testBusy}>
-                  Run Test
+                <Text className={styles.evaluateHint}>
+                  Calculate always uses the formula currently shown in Formula Editor.
+                </Text>
+                <Button
+                  size="small"
+                  appearance="primary"
+                  onClick={() => void runManualFormulaTest()}
+                  disabled={testBusy}
+                >
+                  Calculate
                 </Button>
               </div>
               <div className={styles.evaluateOutputWrap}>
@@ -844,7 +938,10 @@ const ModernShell: React.FC<ModernShellProps> = ({
                       {testFormulaOutput.values.map((row, rowIndex) => (
                         <tr key={rowIndex}>
                           {row.map((cell, colIndex) => (
-                            <td key={`${rowIndex}-${colIndex}`} className={styles.evaluateOutputCell}>
+                            <td
+                              key={`${rowIndex}-${colIndex}`}
+                              className={styles.evaluateOutputCell}
+                            >
                               {cell === null ? "" : String(cell)}
                             </td>
                           ))}
@@ -854,31 +951,21 @@ const ModernShell: React.FC<ModernShellProps> = ({
                   </table>
                 ) : (
                   <div className={styles.evaluateOutputCell}>
-                    <Text className={styles.placeholderText}>Results will render here after running the test.</Text>
+                    <Text className={styles.placeholderText}>
+                      Results will render here after running the test.
+                    </Text>
                   </div>
                 )}
               </div>
               {testStatus ? (
-                <Text className={`${styles.evaluateStatus} ${testStatusType === "error" ? styles.evaluateStatusError : ""}`}>
+                <Text
+                  className={`${styles.evaluateStatus} ${testStatusType === "error" ? styles.evaluateStatusError : ""}`}
+                >
                   {testStatus}
                 </Text>
               ) : null}
             </div>
-          ))}
-          {renderSection("formulas", "insertHelpers", "Insert Helpers", <Table20Regular />, (
-            <div className={styles.placeholder}>
-              <Text className={styles.placeholderText}>
-                Use Insert Selection and named/table suggestions from the Formula Editor overlay for helper insertion.
-              </Text>
-            </div>
-          ))}
-          {renderSection("formulas", "namedFunctions", "Named Functions", <BookNumber20Regular />, (
-            <div className={styles.placeholder}>
-              <Text className={styles.placeholderText}>
-                Named function authoring is included in Function mode within the Formula Editor workflow.
-              </Text>
-            </div>
-          ))}
+          )}
         </div>
       );
     }
@@ -886,31 +973,21 @@ const ModernShell: React.FC<ModernShellProps> = ({
     if (activeWorkspace === "data") {
       return (
         <div className={styles.sectionStack}>
-          {renderSection("data", "queryStatus", "Query Status", <DataPie20Regular />, (
-            <QueriesView onOpenLegacy={openLegacy} embedded />
-          ), { statusChip: "Live" })}
-          {renderSection("data", "refreshQueries", "Refresh Queries", <DataArea20Regular />, (
-            <div className={styles.placeholder}>
-              <Text className={styles.placeholderText}>
-                Query refresh actions and load diagnostics are available in the Query Status section controls.
-              </Text>
-              <div className={styles.placeholderActions}>
-                <Button size="small" onClick={() => openSection("data", "queryStatus")}>
-                  Open Query Status
-                </Button>
-              </div>
-            </div>
-          ))}
-          {renderSection("data", "pivotRefresh", "Pivot Refresh", <Table20Regular />, (
+          {renderSection(
+            "data",
+            "queryStatus",
+            "Query Status",
+            <DataPie20Regular />,
+            <QueriesView onOpenLegacy={openLegacy} embedded />,
+            { statusChip: "Live" }
+          )}
+          {renderSection(
+            "data",
+            "pivotRefresh",
+            "Pivot Refresh",
+            <Table20Regular />,
             <PivotsView onOpenLegacy={openLegacy} embedded />
-          ))}
-          {renderSection("data", "errorsWarnings", "Errors and Warnings", <QuestionCircle20Regular />, (
-            <div className={styles.placeholder}>
-              <Text className={styles.placeholderText}>
-                Refresh warnings are surfaced inline in query and pivot operations to avoid full-page alert banners.
-              </Text>
-            </div>
-          ))}
+          )}
         </div>
       );
     }
@@ -918,30 +995,14 @@ const ModernShell: React.FC<ModernShellProps> = ({
     if (activeWorkspace === "model") {
       return (
         <div className={styles.sectionStack}>
-          {renderSection("model", "parameterBuilder", "Parameter Builder", <TextAlignJustify20Regular />, (
-            <ModelBuilderView onOpenLegacy={openLegacy} embedded />
-          ), { statusChip: "Ready" })}
-          {renderSection("model", "validationLists", "Validation Lists", <Table20Regular />, (
-            <div className={styles.placeholder}>
-              <Text className={styles.placeholderText}>
-                Validation list configuration is part of each parameter row and appears automatically during apply.
-              </Text>
-            </div>
-          ))}
-          {renderSection("model", "defaultFormulaValues", "Default and Formula Values", <DataArea20Regular />, (
-            <div className={styles.placeholder}>
-              <Text className={styles.placeholderText}>
-                Manual and formula-driven defaults are configured per row in the builder grid.
-              </Text>
-            </div>
-          ))}
-          {renderSection("model", "applySummary", "Apply Summary", <DataPie20Regular />, (
-            <div className={styles.placeholder}>
-              <Text className={styles.placeholderText}>
-                Apply output includes created names, validations, and warnings for workbook setup verification.
-              </Text>
-            </div>
-          ))}
+          {renderSection(
+            "model",
+            "parameterBuilder",
+            "Parameter Builder",
+            <TextAlignJustify20Regular />,
+            <ModelBuilderView onOpenLegacy={openLegacy} embedded />,
+            { statusChip: "Ready" }
+          )}
         </div>
       );
     }
@@ -949,36 +1010,50 @@ const ModernShell: React.FC<ModernShellProps> = ({
     if (activeWorkspace === "layout") {
       return (
         <div className={styles.sectionStack}>
-          {renderSection("layout", "gridFreeze", "Gridlines and Freeze Panes", <Grid20Regular />, (
-            <FormatView onOpenLegacy={openLegacy} embedded />
-          ), { statusChip: "Active" })}
+          {renderSection(
+            "layout",
+            "gridFreeze",
+            "Gridlines and Freeze Panes",
+            <Grid20Regular />,
+            <FormatView
+              onOpenLegacy={openLegacy}
+              selectionRequest={formatSelectionRequest}
+              embedded
+            />,
+            { statusChip: "Active" }
+          )}
         </div>
       );
     }
 
     return (
       <div className={styles.sectionStack}>
-        {renderSection("tools", "debugUtilities", "Debug Utilities", <Box20Regular />, (
+        {renderSection(
+          "tools",
+          "debugUtilities",
+          "Debug Utilities",
+          <Box20Regular />,
           <SandboxDebugView onOpenLegacy={openLegacy} embedded />
-        ))}
-        {renderSection("tools", "settings", "Settings", <Settings20Regular />, (
-          <SettingsView onOpenLegacy={openLegacy} onResetUiPreference={onResetUiPreference} embedded />
-        ), { statusChip: "Active" })}
-        {renderSection("tools", "help", "Help", <QuestionCircle20Regular />, (
+        )}
+        {renderSection(
+          "tools",
+          "settings",
+          "Settings",
+          <Settings20Regular />,
+          <SettingsView
+            onOpenLegacy={openLegacy}
+            onResetUiPreference={onResetUiPreference}
+            embedded
+          />,
+          { statusChip: "Active" }
+        )}
+        {renderSection(
+          "tools",
+          "help",
+          "Help",
+          <QuestionCircle20Regular />,
           <HelpView onNavigate={onTargetChange} embedded />
-        ))}
-        {renderSection("tools", "legacyCompatibility", "Legacy and Compatibility", <BookNumber20Regular />, (
-          <div className={styles.placeholder}>
-            <Text className={styles.placeholderText}>
-              Keep modern mode as default. Legacy mode remains available for temporary compatibility fallback.
-            </Text>
-            <div className={styles.placeholderActions}>
-              <Button size="small" onClick={openLegacy}>
-                Open Legacy UI
-              </Button>
-            </div>
-          </div>
-        ))}
+        )}
       </div>
     );
   };
