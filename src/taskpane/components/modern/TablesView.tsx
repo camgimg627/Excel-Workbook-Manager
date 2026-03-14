@@ -1,7 +1,15 @@
 import * as React from "react";
 import { useEffect, useMemo, useState } from "react";
 import { Button, Input, Select, Text, makeStyles } from "@fluentui/react-components";
-import { TableRecord, getTables, updateTableName } from "../../taskpane";
+import {
+  CreateNamedRangesFromTableRequest,
+  TableRecord,
+  createNamedRangesFromTableColumns,
+  getTableColumns,
+  getTables,
+  selectTableAddress,
+  updateTableName,
+} from "../../taskpane";
 import { MODERN_TOKENS, useModernSharedStyles } from "./designTokens";
 
 type SortColumn = "name" | "address" | "sheet" | "scope";
@@ -18,6 +26,16 @@ interface BulkState {
   value: string;
   replaceWith: string;
   caseTransform: CaseTransform;
+}
+
+interface TableRangeModalState {
+  open: boolean;
+  table: TableRecord | null;
+  columns: Array<{ id: string; name: string; address: string }>;
+  selectedColumns: Set<string>;
+  scopeType: "Workbook" | "Worksheet";
+  conflictMode: CreateNamedRangesFromTableRequest["conflictMode"];
+  conflictValue: string;
 }
 
 const useStyles = makeStyles({
@@ -48,7 +66,17 @@ const useStyles = makeStyles({
       "&:hover .row-actions": { opacity: 1, pointerEvents: "auto" },
     },
   },
+  selectedRow: { backgroundColor: "#EAF2FF" },
   cell: { padding: "10px 8px", borderBottom: `1px solid ${MODERN_TOKENS.colorBorder}`, whiteSpace: "nowrap" },
+  clickableCellBtn: {
+    border: "none",
+    background: "transparent",
+    color: MODERN_TOKENS.colorBrandStrong,
+    cursor: "pointer",
+    padding: 0,
+    textDecorationLine: "underline",
+    fontSize: "12px",
+  },
   rowActions: { display: "flex", gap: "4px", opacity: 0, pointerEvents: "none", transition: "opacity 150ms ease" },
   modalBackdrop: {
     position: "fixed",
@@ -61,7 +89,7 @@ const useStyles = makeStyles({
     padding: "16px",
   },
   modal: {
-    width: "min(640px, 100%)",
+    width: "min(720px, 100%)",
     borderRadius: "8px",
     border: `1px solid ${MODERN_TOKENS.colorBorder}`,
     backgroundColor: "#fff",
@@ -69,10 +97,32 @@ const useStyles = makeStyles({
     padding: "20px",
     display: "grid",
     gap: "12px",
+    maxHeight: "88vh",
+    overflow: "auto",
   },
   modalGrid: { display: "grid", gap: "12px", gridTemplateColumns: "repeat(2, minmax(0, 1fr))" },
   full: { gridColumn: "1 / -1" },
   modalActions: { display: "flex", justifyContent: "flex-end", gap: "8px", flexWrap: "wrap" },
+  columnList: {
+    border: `1px solid ${MODERN_TOKENS.colorBorder}`,
+    borderRadius: "8px",
+    padding: "8px",
+    display: "grid",
+    gap: "6px",
+    maxHeight: "220px",
+    overflow: "auto",
+  },
+  columnRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    fontSize: "12px",
+  },
+  mutedCode: {
+    fontFamily: "Consolas, 'Courier New', monospace",
+    color: MODERN_TOKENS.colorTextMuted,
+    fontSize: "11px",
+  },
 });
 
 const applyCase = (value: string, mode: CaseTransform): string => {
@@ -108,6 +158,15 @@ const TablesView: React.FC<TablesViewProps> = ({ onOpenLegacy }) => {
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [inlineEdit, setInlineEdit] = useState<{ id: string; value: string } | null>(null);
+  const [rangesFromTable, setRangesFromTable] = useState<TableRangeModalState>({
+    open: false,
+    table: null,
+    columns: [],
+    selectedColumns: new Set<string>(),
+    scopeType: "Worksheet",
+    conflictMode: "prefix",
+    conflictValue: "nr_",
+  });
   const [bulkState, setBulkState] = useState<BulkState>({
     open: false,
     mode: "Prefix",
@@ -180,6 +239,66 @@ const TablesView: React.FC<TablesViewProps> = ({ onOpenLegacy }) => {
     }
   };
 
+  const openCreateRangesModal = async () => {
+    const table = rows.find((row) => selectedIds.has(row.id));
+    if (!table) {
+      setStatusType("error");
+      setStatus("Select one table first.");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const columns = await getTableColumns(table.sheet, table.name);
+      setRangesFromTable({
+        open: true,
+        table,
+        columns,
+        selectedColumns: new Set(columns.map((item) => item.name)),
+        scopeType: "Worksheet",
+        conflictMode: "prefix",
+        conflictValue: "nr_",
+      });
+    } catch (error) {
+      setStatusType("error");
+      setStatus(`Unable to load table columns: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const applyCreateRangesFromTable = async () => {
+    if (!rangesFromTable.table) return;
+    const selectedColumns = Array.from(rangesFromTable.selectedColumns);
+    if (selectedColumns.length === 0) {
+      setStatusType("error");
+      setStatus("Select at least one table column.");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const result = await createNamedRangesFromTableColumns({
+        sheetName: rangesFromTable.table.sheet,
+        tableName: rangesFromTable.table.name,
+        columns: selectedColumns,
+        scopeType: rangesFromTable.scopeType,
+        conflictMode: rangesFromTable.conflictMode,
+        conflictValue: rangesFromTable.conflictValue,
+      });
+      setRangesFromTable((prev) => ({ ...prev, open: false }));
+      setStatusType("success");
+      setStatus(
+        `Created ${result.created.length} named range(s)` +
+          (result.skipped.length ? `, skipped ${result.skipped.length}.` : ".")
+      );
+    } catch (error) {
+      setStatusType("error");
+      setStatus(`Create from table failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const applyBulk = async () => {
     if (bulkPreview.length === 0) return;
     setSubmitting(true);
@@ -207,11 +326,14 @@ const TablesView: React.FC<TablesViewProps> = ({ onOpenLegacy }) => {
     <div className={styles.root}>
       <div>
         <Text className={shared.sectionTitle}>Tables</Text>
-        <Text className={shared.sectionSubtitle}>Manage workbook tables and naming conventions.</Text>
+        <Text className={shared.sectionSubtitle}>Selection-driven table actions and quick range generation.</Text>
       </div>
 
       <div className={shared.card}>
         <div className={styles.toolbar}>
+          <Button onClick={openCreateRangesModal} disabled={selectedIds.size !== 1 || submitting}>
+            Create New Ranges from Table
+          </Button>
           <Button onClick={() => setBulkState((prev) => ({ ...prev, open: true }))} disabled={selectedIds.size === 0}>
             Bulk Edit ({selectedIds.size})
           </Button>
@@ -263,7 +385,7 @@ const TablesView: React.FC<TablesViewProps> = ({ onOpenLegacy }) => {
           </thead>
           <tbody>
             {visibleRows.map((row) => (
-              <tr key={row.id} className={styles.row}>
+              <tr key={row.id} className={`${styles.row} ${selectedIds.has(row.id) ? styles.selectedRow : ""}`}>
                 <td className={styles.cell}>
                   <input
                     type="checkbox"
@@ -294,10 +416,18 @@ const TablesView: React.FC<TablesViewProps> = ({ onOpenLegacy }) => {
                   {inlineEdit?.id === row.id ? (
                     <Input value={inlineEdit.value} onChange={(_, data) => setInlineEdit({ id: row.id, value: data.value })} />
                   ) : (
-                    row.name
+                    <button
+                      type="button"
+                      className={styles.clickableCellBtn}
+                      onClick={() => void selectTableAddress(row.address, row.sheet)}
+                    >
+                      {row.name}
+                    </button>
                   )}
                 </td>
-                <td className={styles.cell}>{row.address}</td>
+                <td className={styles.cell}>
+                  <span className={styles.mutedCode}>{row.address}</span>
+                </td>
                 <td className={styles.cell}>{row.sheet}</td>
                 <td className={styles.cell}>{row.scope}</td>
               </tr>
@@ -308,6 +438,92 @@ const TablesView: React.FC<TablesViewProps> = ({ onOpenLegacy }) => {
 
       <Text className={shared.mutedText}>{`Showing ${visibleRows.length} of ${rows.length}`}</Text>
       {status ? <Text className={statusClass}>{status}</Text> : null}
+
+      {rangesFromTable.open ? (
+        <div className={styles.modalBackdrop}>
+          <div className={styles.modal}>
+            <Text className={shared.cardTitle}>Create New Ranges from Table</Text>
+            <Text className={shared.mutedText}>
+              Table: {rangesFromTable.table?.name} ({rangesFromTable.table?.sheet})
+            </Text>
+
+            <div>
+              <Text className={shared.mutedText}>Columns</Text>
+              <div className={styles.columnList}>
+                {rangesFromTable.columns.map((column) => (
+                  <label key={column.id} className={styles.columnRow}>
+                    <input
+                      type="checkbox"
+                      checked={rangesFromTable.selectedColumns.has(column.name)}
+                      onChange={() =>
+                        setRangesFromTable((prev) => {
+                          const next = new Set(prev.selectedColumns);
+                          if (next.has(column.name)) next.delete(column.name);
+                          else next.add(column.name);
+                          return { ...prev, selectedColumns: next };
+                        })
+                      }
+                    />
+                    <span>{column.name}</span>
+                    <span className={styles.mutedCode}>{column.address}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div className={styles.modalGrid}>
+              <div>
+                <Text className={shared.mutedText}>Scope</Text>
+                <Select
+                  value={rangesFromTable.scopeType}
+                  onChange={(_, data) =>
+                    setRangesFromTable((prev) => ({ ...prev, scopeType: data.value as "Workbook" | "Worksheet" }))
+                  }
+                >
+                  <option value="Worksheet">Worksheet</option>
+                  <option value="Workbook">Workbook</option>
+                </Select>
+              </div>
+              <div>
+                <Text className={shared.mutedText}>Conflict Handling</Text>
+                <Select
+                  value={rangesFromTable.conflictMode}
+                  onChange={(_, data) =>
+                    setRangesFromTable((prev) => ({
+                      ...prev,
+                      conflictMode: data.value as CreateNamedRangesFromTableRequest["conflictMode"],
+                    }))
+                  }
+                >
+                  <option value="prefix">Add prefix</option>
+                  <option value="suffix">Add suffix</option>
+                  <option value="rename">Replace with explicit name</option>
+                </Select>
+              </div>
+              <div className={styles.full}>
+                <Text className={shared.mutedText}>
+                  {rangesFromTable.conflictMode === "prefix"
+                    ? "Prefix"
+                    : rangesFromTable.conflictMode === "suffix"
+                      ? "Suffix"
+                      : "Replacement Name"}
+                </Text>
+                <Input
+                  value={rangesFromTable.conflictValue}
+                  onChange={(_, data) => setRangesFromTable((prev) => ({ ...prev, conflictValue: data.value }))}
+                />
+              </div>
+            </div>
+
+            <div className={styles.modalActions}>
+              <Button onClick={() => setRangesFromTable((prev) => ({ ...prev, open: false }))}>Cancel</Button>
+              <Button appearance="primary" onClick={() => void applyCreateRangesFromTable()} disabled={submitting}>
+                Create
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {bulkState.open ? (
         <div className={styles.modalBackdrop}>
@@ -360,4 +576,3 @@ const TablesView: React.FC<TablesViewProps> = ({ onOpenLegacy }) => {
 };
 
 export default TablesView;
-

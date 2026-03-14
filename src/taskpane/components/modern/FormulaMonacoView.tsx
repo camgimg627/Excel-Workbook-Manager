@@ -2,6 +2,7 @@ import * as React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Input, Select, Text, makeStyles } from "@fluentui/react-components";
 import Editor, { OnMount, loader } from "@monaco-editor/react";
+import { ArrowExpand20Regular } from "@fluentui/react-icons";
 import type * as Monaco from "monaco-editor";
 import {
   FormulaEvaluationResult,
@@ -230,7 +231,7 @@ const useStyles = makeStyles({
     borderRadius: "8px",
     border: `1px solid ${MODERN_TOKENS.colorBorder}`,
     overflow: "hidden",
-    minHeight: "220px",
+    minHeight: "320px",
     backgroundColor: "#fff",
   },
   editorLoading: {
@@ -249,8 +250,8 @@ const useStyles = makeStyles({
     padding: "42px 12px 128px",
     boxSizing: "border-box",
     fontFamily: "Consolas, 'Courier New', monospace",
-    fontSize: "13px",
-    lineHeight: "1.4",
+    fontSize: "14px",
+    lineHeight: "1.6",
     color: MODERN_TOKENS.colorText,
     backgroundColor: "#fff",
   },
@@ -1628,12 +1629,12 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
       },
     }));
 
-    const editorLineHeight = 20;
-    const defaultVisibleLines = 10;
-    const editorVerticalChrome = 176;
+    const editorLineHeight = 22;
+    const defaultVisibleLines = 14;
+    const editorVerticalChrome = 190;
     const compactEditorHeight =
       editorLineHeight * defaultVisibleLines + editorVerticalChrome + (isPopout ? 80 : 0);
-    const expandedEditorHeight = compactEditorHeight + (isPopout ? 220 : 180);
+    const expandedEditorHeight = compactEditorHeight + (isPopout ? 320 : 280);
     const editorHeight = `${isEditorExpanded ? expandedEditorHeight : compactEditorHeight}px`;
 
     return (
@@ -1799,8 +1800,13 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
                     <Button size="small" onClick={() => void runAction("Insert selection", insertSelection)}>
                       Insert Selection
                     </Button>
-                    <Button size="small" onClick={() => setIsEditorExpanded((prev) => !prev)}>
-                      {isEditorExpanded ? "Use Smaller Editor" : "Expand Editor"}
+                    <Button
+                      size="small"
+                      icon={<ArrowExpand20Regular />}
+                      title={isEditorExpanded ? "Use smaller editor" : "Expand editor workspace"}
+                      onClick={() => setIsEditorExpanded((prev) => !prev)}
+                    >
+                      {isEditorExpanded ? "Collapse" : "Expand"}
                     </Button>
                     {!isPopout ? (
                       <Button
@@ -1844,10 +1850,10 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
                         options={{
                           minimap: { enabled: false },
                           scrollBeyondLastLine: false,
-                          fontSize: 13,
+                          fontSize: 14,
                           lineHeight: editorLineHeight,
                           lineNumbers: "on",
-                          wordWrap: "off",
+                          wordWrap: "on",
                           automaticLayout: true,
                           suggestOnTriggerCharacters: true,
                           quickSuggestions: { other: true, comments: false, strings: false },

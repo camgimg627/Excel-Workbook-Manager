@@ -29,6 +29,21 @@ export interface TableRecord {
   scope: string;
 }
 
+export interface TableColumnRecord {
+  id: string;
+  name: string;
+  address: string;
+}
+
+export interface CreateNamedRangesFromTableRequest {
+  sheetName: string;
+  tableName: string;
+  columns: string[];
+  scopeType: "Workbook" | "Worksheet";
+  conflictMode: "prefix" | "suffix" | "rename";
+  conflictValue: string;
+}
+
 export interface FormulaEvaluationResult {
   address: string;
   values: (string | number | boolean | null)[][];
@@ -3305,6 +3320,91 @@ export async function updateTableName(sheetName: string, oldName: string, newNam
     await syncWorkbookTablesNamedRange(context, records);
 
     await context.sync();
+  });
+}
+
+export async function selectTableAddress(address: string, fallbackSheet: string) {
+  await Excel.run(async (context) => {
+    const parsed = getSheetAndAddress(address, fallbackSheet);
+    const range = context.workbook.worksheets.getItem(parsed.sheet).getRange(parsed.address);
+    range.select();
+    await context.sync();
+  });
+}
+
+export async function getTableColumns(sheetName: string, tableName: string): Promise<TableColumnRecord[]> {
+  return Excel.run(async (context) => {
+    const sheet = context.workbook.worksheets.getItem(sheetName);
+    const table = sheet.tables.getItem(tableName);
+    table.columns.load("items/name");
+    await context.sync();
+
+    const ranges = table.columns.items.map((column) => {
+      const bodyRange = column.getDataBodyRange();
+      bodyRange.load("address");
+      return { column, bodyRange };
+    });
+    await context.sync();
+
+    return ranges.map((item) => ({
+      id: `${sheetName}::${tableName}::${item.column.name}`,
+      name: item.column.name,
+      address: item.bodyRange.address,
+    }));
+  });
+}
+
+export async function createNamedRangesFromTableColumns(
+  request: CreateNamedRangesFromTableRequest
+): Promise<{ created: string[]; skipped: string[] }> {
+  return Excel.run(async (context) => {
+    const table = context.workbook.worksheets.getItem(request.sheetName).tables.getItem(request.tableName);
+    table.columns.load("items/name");
+
+    const workbookNames = context.workbook.names;
+    workbookNames.load("items/name");
+
+    const sheetNames = context.workbook.worksheets.getItem(request.sheetName).names;
+    sheetNames.load("items/name");
+    await context.sync();
+
+    const targetCollection = request.scopeType === "Workbook" ? workbookNames : sheetNames;
+    const taken = new Set(targetCollection.items.map((item) => item.name.toUpperCase()));
+    const created: string[] = [];
+    const skipped: string[] = [];
+
+    for (const columnName of request.columns) {
+      const column = table.columns.getItem(columnName);
+      const dataBodyRange = column.getDataBodyRange();
+      dataBodyRange.load("address");
+      await context.sync();
+
+      const normalizedBase = toModelSafeName(columnName);
+      const fallbackName = toModelSafeName(`${request.tableName}_${columnName}`);
+      let desiredName = normalizedBase || fallbackName;
+      const desiredUpper = desiredName.toUpperCase();
+      if (taken.has(desiredUpper)) {
+        const override = request.conflictValue.trim();
+        if (request.conflictMode === "prefix" && override) {
+          desiredName = toModelSafeName(`${override}${desiredName}`);
+        } else if (request.conflictMode === "suffix" && override) {
+          desiredName = toModelSafeName(`${desiredName}${override}`);
+        } else if (request.conflictMode === "rename" && override) {
+          desiredName = toModelSafeName(override);
+        } else {
+          skipped.push(columnName);
+          continue;
+        }
+      }
+
+      const finalName = toUniqueName(desiredName || fallbackName, taken);
+      targetCollection.add(finalName, `=${dataBodyRange.address}`);
+      taken.add(finalName.toUpperCase());
+      created.push(finalName);
+    }
+
+    await context.sync();
+    return { created, skipped };
   });
 }
 
