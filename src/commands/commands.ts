@@ -1,7 +1,6 @@
 /* global Office, OfficeRuntime */
 import { NAVIGATION_SIGNAL_KEY, NavigationTarget } from "../taskpane/navigation";
-
-const OPEN_FORMULA_EDITOR_SIGNAL_KEY = "wbm.openFormulaEditor.request";
+import { OPEN_FORMULA_EDITOR_SIGNAL_KEY } from "../shared/signals";
 const OPEN_FORMULA_EDITOR_ONLY_SIGNAL = "open-only";
 const OPEN_FORMULA_EDITOR_AND_PULL_SIGNAL = "open-and-pull";
 const FORMULA_PULL_SIGNAL = "formula-pull";

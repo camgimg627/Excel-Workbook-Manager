@@ -900,6 +900,7 @@ const FormatView: React.FC<FormatViewProps> = ({
   const [status, setStatus] = useState("");
   const [statusType, setStatusType] = useState<"ok" | "error">("ok");
   const [styleBaseline, setStyleBaseline] = useState<StyleBaseline | null>(null);
+  const [confirmDeleteShapeId, setConfirmDeleteShapeId] = useState("");
   const shapeHandlersRef = useRef<Array<{ remove: () => Promise<void> | void }>>([]);
   const selectedShapeIdRef = useRef("");
   const editorCardRef = useRef<HTMLDivElement | null>(null);
@@ -975,6 +976,35 @@ const FormatView: React.FC<FormatViewProps> = ({
     setStatus(normalizeError(error));
   };
 
+  const applyShapeRecords = useCallback(
+    (shapeRecords: ShapeBuilderShapeRecord[], preferredShapeId?: string) => {
+      setShapes(shapeRecords);
+      setConfirmDeleteShapeId((current) =>
+        current && !shapeRecords.some((shape) => shape.id === current) ? "" : current
+      );
+      setSelectedShapeId((prev) => {
+        const nextId = preferredShapeId ?? prev;
+        return shapeRecords.some((shape) => shape.id === nextId) ? nextId : (shapeRecords[0]?.id ?? "");
+      });
+    },
+    []
+  );
+
+  const refreshShapes = useCallback(
+    async (preferredShapeId?: string) => {
+      setBusy(true);
+      try {
+        const shapeRecords = sortShapesBySelectionPanePosition(await listShapeBuilderShapes());
+        applyShapeRecords(shapeRecords, preferredShapeId);
+      } catch (error) {
+        setErr(error);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [applyShapeRecords]
+  );
+
   const refreshAll = useCallback(async () => {
     setBusy(true);
     try {
@@ -992,14 +1022,11 @@ const FormatView: React.FC<FormatViewProps> = ({
       const failures: string[] = [];
 
       if (shapeResult.status === "fulfilled") {
-        const shapeRecords = sortShapesBySelectionPanePosition(shapeResult.value);
-        setShapes(shapeRecords);
-        setSelectedShapeId((prev) =>
-          shapeRecords.some((x) => x.id === prev) ? prev : (shapeRecords[0]?.id ?? "")
-        );
+        applyShapeRecords(sortShapesBySelectionPanePosition(shapeResult.value));
       } else {
         setShapes([]);
         setSelectedShapeId("");
+        setConfirmDeleteShapeId("");
         failures.push(`Shapes: ${normalizeError(shapeResult.reason)}`);
       }
 
@@ -1036,16 +1063,15 @@ const FormatView: React.FC<FormatViewProps> = ({
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [applyShapeRecords]);
 
   const refreshAndSelectShape = useCallback(
     async (sheetName: string, shapeName: string) => {
-      await refreshAll();
-      setSelectedShapeId(`${sheetName}::${shapeName}`);
+      await refreshShapes(`${sheetName}::${shapeName}`);
       setExpandedSections(["sheetPresentation"]);
       setTab("shape");
     },
-    [refreshAll]
+    [refreshShapes]
   );
 
   useEffect(() => {
@@ -1405,6 +1431,7 @@ const FormatView: React.FC<FormatViewProps> = ({
       });
       setShapes((prev) => sortShapesBySelectionPanePosition([...prev, created]));
       setSelectedShapeId(created.id);
+      setConfirmDeleteShapeId("");
       setTab("shape");
       setOk("Shape added.");
     } catch (error) {
@@ -1426,6 +1453,7 @@ const FormatView: React.FC<FormatViewProps> = ({
         fontColor: draft?.fontColor ?? "#1F2937",
       });
       await refreshAndSelectShape(inserted.sheet, inserted.name);
+      setConfirmDeleteShapeId("");
       setOk(`Inserted "${inserted.name}" on ${inserted.sheet}!${inserted.anchorAddress}.`);
     } catch (error) {
       setErr(error);
@@ -1439,6 +1467,7 @@ const FormatView: React.FC<FormatViewProps> = ({
       const copy = await duplicateShapeBuilderShape(shape.sheetName, shape.shapeName);
       setShapes((prev) => sortShapesBySelectionPanePosition([...prev, copy]));
       setSelectedShapeId(copy.id);
+      setConfirmDeleteShapeId("");
       setOk("Shape duplicated.");
     } catch (error) {
       setErr(error);
@@ -1446,11 +1475,9 @@ const FormatView: React.FC<FormatViewProps> = ({
   };
 
   const deleteShape = async (shape: ShapeBuilderShapeRecord) => {
-    if (!window.confirm(`Delete "${shape.text || shape.shapeName}"?`)) {
-      return;
-    }
     try {
       await deleteShapeBuilderShape(shape.sheetName, shape.shapeName);
+      setConfirmDeleteShapeId("");
       setShapes((prev) => {
         const next = sortShapesBySelectionPanePosition(prev.filter((x) => x.id !== shape.id));
         setSelectedShapeId((current) => (current === shape.id ? (next[0]?.id ?? "") : current));
@@ -1483,6 +1510,7 @@ const FormatView: React.FC<FormatViewProps> = ({
     try {
       await renameShape(selectedShape.sheetName, selectedShape.shapeName, nextName);
       await refreshAndSelectShape(selectedShape.sheetName, nextName);
+      setConfirmDeleteShapeId("");
       setOk(`Renamed shape to "${nextName}".`);
     } catch (error) {
       setErr(error);
@@ -1496,6 +1524,7 @@ const FormatView: React.FC<FormatViewProps> = ({
     try {
       await nudgeShape(selectedShape.sheetName, selectedShape.shapeName, dx, dy);
       await refreshAndSelectShape(selectedShape.sheetName, selectedShape.shapeName);
+      setConfirmDeleteShapeId("");
       setOk("Shape nudged.");
     } catch (error) {
       setErr(error);
@@ -1511,6 +1540,7 @@ const FormatView: React.FC<FormatViewProps> = ({
     try {
       await alignShapeToSelection(selectedShape.sheetName, selectedShape.shapeName, alignment);
       await refreshAndSelectShape(selectedShape.sheetName, selectedShape.shapeName);
+      setConfirmDeleteShapeId("");
       setOk(`Aligned shape ${alignment.toLowerCase()}.`);
     } catch (error) {
       setErr(error);
@@ -1526,6 +1556,7 @@ const FormatView: React.FC<FormatViewProps> = ({
     try {
       await setShapeZOrder(selectedShape.sheetName, selectedShape.shapeName, order);
       await refreshAndSelectShape(selectedShape.sheetName, selectedShape.shapeName);
+      setConfirmDeleteShapeId("");
       setOk("Shape order updated.");
     } catch (error) {
       setErr(error);
@@ -1547,6 +1578,7 @@ const FormatView: React.FC<FormatViewProps> = ({
         selectedShape.anchorAddress
       );
       await refreshAndSelectShape(selectedShape.sheetName, selectedShape.shapeName);
+      setConfirmDeleteShapeId("");
       setOk("Shape moved to the current selection.");
     } catch (error) {
       setErr(error);
@@ -1594,6 +1626,7 @@ const FormatView: React.FC<FormatViewProps> = ({
         draft.shapeName
       );
       await refreshAndSelectShape(draft.sheetName, draft.shapeName);
+      setConfirmDeleteShapeId("");
       setOk("Anchor-cell formula applied.");
     } catch (error) {
       setErr(error);
@@ -1706,13 +1739,13 @@ const FormatView: React.FC<FormatViewProps> = ({
     );
   };
 
-  const openLayoutSection = (section: LayoutSection) => {
+  const openLayoutSection = useCallback((section: LayoutSection) => {
     setExpandedSections((prev) => (prev.includes(section) ? prev : [section]));
-  };
+  }, []);
 
-  const toggleLayoutSection = (section: LayoutSection) => {
+  const toggleLayoutSection = useCallback((section: LayoutSection) => {
     setExpandedSections((prev) => (prev.includes(section) ? [] : [section]));
-  };
+  }, []);
 
   const applySelectedFormatActive = async () => {
     if (!selectedFormatId) {
@@ -1726,6 +1759,46 @@ const FormatView: React.FC<FormatViewProps> = ({
       setErr(error);
     }
   };
+
+  const startShapeBuilder = useCallback(() => {
+    setConfirmDeleteShapeId("");
+    openLayoutSection("sheetPresentation");
+    void addShape();
+  }, [addShape, openLayoutSection]);
+
+  const insertShapeAtSelection = useCallback(() => {
+    setConfirmDeleteShapeId("");
+    openLayoutSection("sheetPresentation");
+    void insertShapeOnActiveCell();
+  }, [insertShapeOnActiveCell, openLayoutSection]);
+
+  const openShapeBuilderPopout = useCallback(() => {
+    void openFormatEditorPopout();
+  }, []);
+
+  const renderShapeBuilderActions = (variant: "toolbar" | "card") => (
+    <>
+      <button
+        className={variant === "toolbar" ? s.addBtn : s.smallBtn}
+        type="button"
+        onClick={startShapeBuilder}
+        disabled={busy}
+      >
+        <Add20Regular /> Start Shape Builder
+      </button>
+      <button className={s.smallBtn} type="button" onClick={insertShapeAtSelection} disabled={busy}>
+        Insert On Active Cell
+      </button>
+      <button className={s.smallBtn} type="button" onClick={() => void refreshShapes()} disabled={busy}>
+        Refresh
+      </button>
+      {!isPopout ? (
+        <button className={s.smallBtn} type="button" onClick={openShapeBuilderPopout}>
+          Pop Out
+        </button>
+      ) : null}
+    </>
+  );
 
   const fillDisplayColor = draft
     ? draft.fillColor === NO_FILL_COLOR_TOKEN
@@ -1972,27 +2045,7 @@ const FormatView: React.FC<FormatViewProps> = ({
             >
               Gridlines and Freeze
             </Button>
-            <button
-              className={s.addBtn}
-              type="button"
-              onClick={() => {
-                openLayoutSection("sheetPresentation");
-                void addShape();
-              }}
-              disabled={busy}
-                    >
-                      <Add20Regular /> Start Shape Builder
-            </button>
-            <Button
-              size="small"
-              onClick={() => {
-                openLayoutSection("sheetPresentation");
-                void insertShapeOnActiveCell();
-              }}
-              disabled={busy}
-            >
-              Insert On Active Cell
-            </Button>
+            {renderShapeBuilderActions("toolbar")}
             <Button
               size="small"
               appearance="secondary"
@@ -2000,19 +2053,6 @@ const FormatView: React.FC<FormatViewProps> = ({
             >
               Quick Formatting
             </Button>
-            <Button
-              size="small"
-              icon={<ArrowClockwise20Regular />}
-              onClick={() => void refreshAll()}
-              disabled={busy}
-            >
-              Refresh
-            </Button>
-            {!isPopout ? (
-              <Button size="small" onClick={() => void openFormatEditorPopout()}>
-                Pop Out
-              </Button>
-            ) : null}
             <Button size="small" onClick={onOpenLegacy}>
               Legacy
             </Button>
@@ -2028,7 +2068,7 @@ const FormatView: React.FC<FormatViewProps> = ({
             className={s.sectionHeaderBtn}
             type="button"
             onClick={() => toggleLayoutSection("gridFreeze")}
-            aria-expanded={expandedSections.includes("gridFreeze") ? "true" : "false"}
+            aria-expanded={expandedSections.includes("gridFreeze")}
             aria-controls="format-grid-freeze-panel"
           >
             <span className={s.sectionHeaderMain}>
@@ -2062,7 +2102,7 @@ const FormatView: React.FC<FormatViewProps> = ({
             className={s.sectionHeaderBtn}
             type="button"
             onClick={() => toggleLayoutSection("sheetPresentation")}
-            aria-expanded={expandedSections.includes("sheetPresentation") ? "true" : "false"}
+            aria-expanded={expandedSections.includes("sheetPresentation")}
             aria-controls="format-sheet-presentation-panel"
           >
             <span className={s.sectionHeaderMain}>
@@ -2108,39 +2148,7 @@ const FormatView: React.FC<FormatViewProps> = ({
                         : `${shapes.length}`}{" "}
                       on active sheet
                     </Text>
-                    <button
-                      className={s.smallBtn}
-                      type="button"
-                      onClick={() => void addShape()}
-                      disabled={busy}
-                    >
-                      Start Shape Builder
-                    </button>
-                    <button
-                      className={s.smallBtn}
-                      type="button"
-                      onClick={() => void insertShapeOnActiveCell()}
-                      disabled={busy}
-                    >
-                      Insert On Active Cell
-                    </button>
-                    <button
-                      className={s.smallBtn}
-                      type="button"
-                      onClick={() => void refreshAll()}
-                      disabled={busy}
-                    >
-                      Refresh
-                    </button>
-                    {!isPopout ? (
-                      <button
-                        className={s.smallBtn}
-                        type="button"
-                        onClick={() => void openFormatEditorPopout()}
-                      >
-                        Pop Out
-                      </button>
-                    ) : null}
+                    {renderShapeBuilderActions("card")}
                   </div>
                 </div>
                 <div className={s.grid2}>
@@ -2171,6 +2179,7 @@ const FormatView: React.FC<FormatViewProps> = ({
                   ) : null}
                   {filteredShapes.map((shape) => {
                     const selected = shape.id === selectedShapeId;
+                    const isConfirmingDelete = confirmDeleteShapeId === shape.id;
                     return (
                       <div
                         key={shape.id}
@@ -2197,39 +2206,70 @@ const FormatView: React.FC<FormatViewProps> = ({
                           <div className={s.itemTag}>{shape.linkType.toLowerCase()}</div>
                         </div>
                         <div className={s.actionCol}>
-                          <button
-                            className={s.smallBtn}
-                            type="button"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              editShape(shape);
-                            }}
-                            disabled={busy}
-                          >
-                            Edit
-                          </button>
-                          <button
-                            className={s.smallBtn}
-                            type="button"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              void duplicateShape(shape);
-                            }}
-                            disabled={busy}
-                          >
-                            Copy
-                          </button>
-                          <button
-                            className={`${s.smallBtn} ${s.dangerBtn}`}
-                            type="button"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              void deleteShape(shape);
-                            }}
-                            disabled={busy}
-                          >
-                            Delete
-                          </button>
+                          {isConfirmingDelete ? (
+                            <>
+                              <button
+                                className={`${s.smallBtn} ${s.dangerBtn}`}
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  void deleteShape(shape);
+                                }}
+                                disabled={busy}
+                              >
+                                Confirm
+                              </button>
+                              <button
+                                className={s.smallBtn}
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setConfirmDeleteShapeId("");
+                                }}
+                                disabled={busy}
+                              >
+                                Cancel
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <button
+                                className={s.smallBtn}
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setConfirmDeleteShapeId("");
+                                  editShape(shape);
+                                }}
+                                disabled={busy}
+                              >
+                                Edit
+                              </button>
+                              <button
+                                className={s.smallBtn}
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setConfirmDeleteShapeId("");
+                                  void duplicateShape(shape);
+                                }}
+                                disabled={busy}
+                              >
+                                Copy
+                              </button>
+                              <button
+                                className={`${s.smallBtn} ${s.dangerBtn}`}
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setConfirmDeleteShapeId(shape.id);
+                                }}
+                                disabled={busy}
+                              >
+                                Delete
+                              </button>
+                            </>
+                          )}
                         </div>
                       </div>
                     );
@@ -3333,7 +3373,7 @@ const FormatView: React.FC<FormatViewProps> = ({
             className={s.sectionHeaderBtn}
             type="button"
             onClick={() => toggleLayoutSection("quickFormatting")}
-            aria-expanded={expandedSections.includes("quickFormatting") ? "true" : "false"}
+            aria-expanded={expandedSections.includes("quickFormatting")}
             aria-controls="format-quick-formatting-panel"
           >
             <span className={s.sectionHeaderMain}>

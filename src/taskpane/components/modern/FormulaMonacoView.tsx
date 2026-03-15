@@ -1,13 +1,8 @@
 import * as React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Button, Input, Select, Text, makeStyles } from "@fluentui/react-components";
-import {
-  ArrowExpand20Regular,
-  ArrowMinimizeVertical20Regular,
-  Open20Regular,
-} from "@fluentui/react-icons";
+import { Button, Checkbox, Input, Select, Text, makeStyles } from "@fluentui/react-components";
 import Editor, { OnMount, loader } from "@monaco-editor/react";
-import { ArrowExpand20Regular } from "@fluentui/react-icons";
+import { Delete20Regular } from "@fluentui/react-icons";
 import type * as Monaco from "monaco-editor";
 import {
   FormulaEvaluationResult,
@@ -63,8 +58,6 @@ interface DialogOpenFormulaMessage {
   wizardArgs?: string;
   wizardReturnExpression?: string;
   wizardVariables?: Array<{ name: string; expression: string }>;
-  activeSubTab?: FormulaSubTab;
-  lambdaTestInputs?: string[];
 }
 
 let monacoLoaderConfigured = false;
@@ -123,7 +116,6 @@ interface FormulaMonacoViewProps {
   isPopout: boolean;
   onOpenLegacy: () => void;
   embedded?: boolean;
-  onFormulaChange?: (formula: string) => void;
 }
 
 export interface FormulaViewHandle {
@@ -146,7 +138,7 @@ interface ActiveCellState {
 type FormulaCreationMode = "Formula" | "Function";
 type FormulaAuthoringMode = "Editor" | "Wizard";
 type WizardTemplate = "LAMBDA" | "LET";
-type FormulaSubTab = "metadata" | "lambda-test" | "editor" | "wizard" | "live-output";
+type FormulaSubTab = "metadata" | "lambda-test" | "editor" | "wizard";
 
 interface WizardLetVariable {
   id: string;
@@ -154,70 +146,91 @@ interface WizardLetVariable {
   expression: string;
 }
 
+interface PreparedWizardLetVariable extends WizardLetVariable {
+  name: string;
+  expression: string;
+}
+
+interface WizardOutputState {
+  output: FormulaEvaluationResult | null;
+  error: string;
+}
+
+const WIZARD_FINAL_OUTPUT_TARGET = "__wbm-let-final-output";
+const DEFAULT_EDITOR_HEIGHT = 268;
+const DEFAULT_POPOUT_EDITOR_HEIGHT = 360;
+const MIN_EDITOR_HEIGHT = 220;
+const MAX_EDITOR_HEIGHT = 760;
+
+const buildLetFormula = (
+  variables: Array<Pick<PreparedWizardLetVariable, "name" | "expression">>,
+  outputExpression: string
+): string => {
+  const normalizedOutput = outputExpression.trim() || "0";
+  if (variables.length === 0) {
+    return `=${normalizedOutput}`;
+  }
+  return `=LET(${variables.map((item) => `${item.name},${item.expression}`).join(",")},${normalizedOutput})`;
+};
+
 const useStyles = makeStyles({
   root: { display: "grid", gap: "16px" },
+  rootEmbedded: { gap: 0 },
   card: {
     borderRadius: "8px",
     border: `1px solid ${MODERN_TOKENS.colorBorder}`,
     backgroundColor: "#fff",
     boxShadow: MODERN_TOKENS.shadowCard,
-    padding: "14px",
+    padding: "16px",
     display: "grid",
     gap: "12px",
+  },
+  cardEmbedded: {
+    borderRadius: 0,
+    border: "none",
+    boxShadow: "none",
+    padding: "12px 0 0 0",
   },
   editorShell: {
     display: "grid",
-    gap: "12px",
-  },
-  editorWorkspaceHeader: {
-    display: "grid",
     gap: "10px",
-    gridTemplateColumns: "minmax(0, 1fr) auto",
-    alignItems: "start",
-    "@media (max-width: 780px)": {
-      gridTemplateColumns: "minmax(0, 1fr)",
-    },
   },
-  editorWorkspaceMeta: {
-    display: "grid",
-    gap: "4px",
-    minWidth: 0,
-  },
-  editorWorkspaceTitle: {
-    fontSize: "13px",
-    lineHeight: "18px",
-    fontWeight: 700,
-    color: MODERN_TOKENS.colorText,
-  },
-  editorWorkspaceHint: {
-    fontSize: "12px",
-    lineHeight: "17px",
-    color: MODERN_TOKENS.colorTextMuted,
-  },
-  editorHeaderActions: {
-    display: "flex",
-    gap: "6px",
-    flexWrap: "wrap",
-    justifyContent: "flex-end",
-    "@media (max-width: 780px)": {
-      justifyContent: "flex-start",
-    },
-  },
-  overlayCluster: {
+  editorStage: {
     borderRadius: "8px",
     border: `1px solid ${MODERN_TOKENS.colorBorder}`,
-    backgroundColor: "rgba(255, 255, 255, 0.95)",
-    boxShadow: MODERN_TOKENS.shadowCard,
+    backgroundColor: "#FFFFFF",
+    overflow: "hidden",
+    display: "grid",
+    gridTemplateRows: "minmax(0, 1fr) auto",
+    minHeight: 0,
+  },
+  editorToolbar: {
+    borderRadius: "8px",
+    border: `1px solid ${MODERN_TOKENS.colorBorder}`,
+    backgroundColor: "#F8FAFC",
     padding: "8px",
     display: "grid",
-    gap: "6px",
+    gap: "8px",
   },
-  overlayTitle: {
-    fontSize: "11px",
-    fontWeight: 700,
-    color: MODERN_TOKENS.colorTextMuted,
-    textTransform: "uppercase",
-    letterSpacing: "0.04em",
+  editorToolbarButtons: {
+    display: "flex",
+    gap: "8px",
+    flexWrap: "wrap",
+    alignItems: "center",
+  },
+  editorToolbarMeta: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: "8px",
+    flexWrap: "wrap",
+  },
+  sectionInfoRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: "12px",
+    flexWrap: "wrap",
   },
   actionRow: {
     display: "flex",
@@ -250,55 +263,42 @@ const useStyles = makeStyles({
     boxShadow: "0 1px 2px rgba(17,24,39,0.08)",
   },
   editorWrap: {
-    borderRadius: "10px",
-    border: "1px solid #C8D2E1",
+    borderRadius: 0,
+    border: "none",
     overflow: "hidden",
-    minHeight: "320px",
+    minHeight: 0,
     backgroundColor: "#fff",
-    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.75)",
+  },
+  editorWrapResizable: {
+    height: `${DEFAULT_EDITOR_HEIGHT}px`,
+    resize: "vertical",
+    overflow: "auto",
+    minHeight: `${MIN_EDITOR_HEIGHT}px`,
+    maxHeight: `min(${MAX_EDITOR_HEIGHT}px, 72vh)`,
+  },
+  editorWrapResizablePopout: {
+    height: `${DEFAULT_POPOUT_EDITOR_HEIGHT}px`,
   },
   editorLoading: {
-    minHeight: "320px",
+    minHeight: "220px",
     display: "grid",
     alignItems: "center",
     justifyItems: "center",
-    backgroundColor: "#F8FBFF",
+    backgroundColor: "#fff",
   },
-  editorHeightCompact: { height: "468px" },
-  editorHeightExpanded: { height: "672px" },
-  editorHeightPopoutCompact: { height: "578px" },
-  editorHeightPopoutExpanded: { height: "822px" },
   fallbackEditor: {
     width: "100%",
-    minHeight: "320px",
+    minHeight: "220px",
     border: "none",
     outline: "none",
-    resize: "vertical",
-    padding: "18px 18px 26px",
+    resize: "none",
+    padding: "12px",
     boxSizing: "border-box",
-<<<<<<< ours
-    fontFamily: "Consolas, 'Cascadia Mono', 'Courier New', monospace",
-    fontSize: "14px",
-    lineHeight: "1.7",
-=======
     fontFamily: "Consolas, 'Courier New', monospace",
     fontSize: "14px",
     lineHeight: "1.6",
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
     color: MODERN_TOKENS.colorText,
-    backgroundColor: "#FDFEFF",
+    backgroundColor: "#fff",
   },
   liveTestHeader: {
     display: "flex",
@@ -316,36 +316,6 @@ const useStyles = makeStyles({
   },
   outputTable: { width: "100%", borderCollapse: "collapse", fontSize: "12px" },
   outputCell: { borderBottom: `1px solid ${MODERN_TOKENS.colorBorder}`, padding: "8px 10px" },
-  popoutLiveOutputPanel: {
-    borderTop: `1px solid ${MODERN_TOKENS.colorBorder}`,
-    paddingTop: "12px",
-    display: "grid",
-    gap: "8px",
-  },
-  autoCaptureRow: {
-    display: "grid",
-    gap: "6px",
-  },
-  contextTopRow: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: "12px",
-    flexWrap: "wrap",
-  },
-  checkboxLabel: {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: "6px",
-    color: MODERN_TOKENS.colorTextMuted,
-    fontSize: "12px",
-  },
-  contextHint: {
-    fontSize: "11px",
-    lineHeight: "15px",
-    color: MODERN_TOKENS.colorTextMuted,
-  },
-  connectedText: { color: MODERN_TOKENS.colorBrandStrong, fontWeight: 700 },
   modeRow: {
     display: "flex",
     alignItems: "center",
@@ -377,18 +347,28 @@ const useStyles = makeStyles({
     borderRadius: "8px",
     border: `1px solid ${MODERN_TOKENS.colorBorder}`,
     backgroundColor: "#FFFFFF",
-    padding: "12px 14px",
+    padding: "10px 12px",
     display: "grid",
-    gap: "12px",
+    gap: "10px",
   },
-  actionDock: {
+  editorFooter: {
     borderRadius: "8px",
     border: `1px solid ${MODERN_TOKENS.colorBorder}`,
     backgroundColor: "#F8FAFC",
-    boxShadow: MODERN_TOKENS.shadowCard,
     padding: "10px",
     display: "grid",
     gap: "8px",
+  },
+  editorFooterPinned: {
+    borderRadius: 0,
+    border: "none",
+    borderTop: `1px solid ${MODERN_TOKENS.colorBorder}`,
+    boxShadow: "0 -6px 18px rgba(17,24,39,0.08)",
+  },
+  editorResizeHint: {
+    fontSize: "11px",
+    lineHeight: "15px",
+    color: MODERN_TOKENS.colorTextMuted,
   },
   modeSelect: { minWidth: "160px" },
   functionMetaGrid: {
@@ -400,6 +380,10 @@ const useStyles = makeStyles({
     },
   },
   fullRow: { gridColumn: "1 / -1" },
+  wizardList: {
+    display: "grid",
+    gap: "10px",
+  },
   wizardCard: {
     borderRadius: "8px",
     border: `1px solid ${MODERN_TOKENS.colorBorder}`,
@@ -408,14 +392,59 @@ const useStyles = makeStyles({
     display: "grid",
     gap: "10px",
   },
-  wizardVarRow: {
+  wizardCardHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: "10px",
+    flexWrap: "wrap",
+  },
+  wizardCardHeading: {
+    display: "grid",
+    gap: "4px",
+    minWidth: 0,
+  },
+  wizardCardTitle: {
+    fontSize: "13px",
+    lineHeight: "18px",
+    fontWeight: 700,
+    color: MODERN_TOKENS.colorText,
+  },
+  wizardCardHint: {
+    fontSize: "11px",
+    lineHeight: "15px",
+    color: MODERN_TOKENS.colorTextMuted,
+  },
+  wizardCardActions: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    flexWrap: "wrap",
+    justifyContent: "flex-end",
+  },
+  wizardCardFields: {
     display: "grid",
     gap: "8px",
-    gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.2fr) auto",
-    alignItems: "center",
+    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
     "@media (max-width: 780px)": {
       gridTemplateColumns: "minmax(0, 1fr)",
     },
+  },
+  wizardAddRow: {
+    display: "flex",
+    justifyContent: "flex-start",
+  },
+  wizardOutputStack: {
+    display: "grid",
+    gap: "6px",
+  },
+  wizardOutputLabel: {
+    fontSize: "11px",
+    lineHeight: "15px",
+    fontWeight: 600,
+    color: MODERN_TOKENS.colorTextMuted,
+    textTransform: "uppercase",
+    letterSpacing: "0.03em",
   },
   wizardPreview: {
     borderRadius: "6px",
@@ -778,7 +807,7 @@ const collectLetLambdaLocals = (text: string, cursorOffset: number): string[] =>
 };
 
 const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewProps>(
-  ({ isPopout, onOpenLegacy, embedded = false, onFormulaChange }, ref) => {
+  ({ isPopout, onOpenLegacy, embedded = false }, ref) => {
     const shared = useModernSharedStyles();
     const styles = useStyles();
     const [formulaText, setFormulaText] = useState<string>("");
@@ -786,7 +815,6 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
     const [statusType, setStatusType] = useState<"success" | "error">("success");
     const [activeCell, setActiveCell] = useState<ActiveCellState | null>(null);
     const [formulaOutput, setFormulaOutput] = useState<FormulaEvaluationResult | null>(null);
-    const [autoCapture, setAutoCapture] = useState<boolean>(false);
     const [loadingMetadata, setLoadingMetadata] = useState<boolean>(false);
     const [editorReady, setEditorReady] = useState<boolean>(false);
     const [editorLoadError, setEditorLoadError] = useState<string>("");
@@ -803,13 +831,27 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
     const [wizardVariables, setWizardVariables] = useState<WizardLetVariable[]>([
       { id: "var-1", name: "", expression: "" },
     ]);
+    const [wizardOutputTarget, setWizardOutputTarget] = useState<string>(WIZARD_FINAL_OUTPUT_TARGET);
+    const [wizardVariableOutputs, setWizardVariableOutputs] = useState<Record<string, WizardOutputState>>({});
+    const [wizardResultOutput, setWizardResultOutput] = useState<WizardOutputState>({
+      output: null,
+      error: "",
+    });
+    const [wizardFormulaOutput, setWizardFormulaOutput] = useState<WizardOutputState>({
+      output: null,
+      error: "",
+    });
+    const [wizardOutputBusy, setWizardOutputBusy] = useState<boolean>(false);
+    const [lastWizardOutputAt, setLastWizardOutputAt] = useState<string>("");
     const [lambdaTestInputs, setLambdaTestInputs] = useState<string[]>([]);
     const [liveTestBusy, setLiveTestBusy] = useState<boolean>(false);
     const [liveTestError, setLiveTestError] = useState<string>("");
     const [lastTestedAt, setLastTestedAt] = useState<string>("");
+    const [lambdaTestOutput, setLambdaTestOutput] = useState<FormulaEvaluationResult | null>(null);
+    const [lambdaTestBusy, setLambdaTestBusy] = useState<boolean>(false);
+    const [lambdaTestError, setLambdaTestError] = useState<string>("");
+    const [lastLambdaTestedAt, setLastLambdaTestedAt] = useState<string>("");
     const [lastTestInvocation, setLastTestInvocation] = useState<string>("");
-    const [isEditorExpanded, setIsEditorExpanded] = useState<boolean>(false);
-    const [editorHasFocus, setEditorHasFocus] = useState<boolean>(false);
     const [activeSubTab, setActiveSubTab] = useState<FormulaSubTab | null>("editor");
 
     const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
@@ -828,8 +870,6 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
       >
     >(new Map());
     const lastSyncedFormulaRef = useRef<string>("");
-    const suppressAutoCaptureUntilRef = useRef<number>(0);
-
     const statusClass = statusType === "success" ? shared.successText : shared.errorText;
     const effectiveNamedFunctionArgs = useMemo(
       () => mergeArgsWithDraft(namedFunctionArgs, namedFunctionArgDraft),
@@ -854,8 +894,86 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
       }
     }, [effectiveNamedFunctionArgs, formulaText]);
     const wizardPreview = useMemo(() => {
+      const returnExpression = wizardReturnExpression.trim() || "0";
+
+      if (wizardTemplate === "LET") {
+        const issuesById: Record<string, string> = {};
+        const preparedVars: PreparedWizardLetVariable[] = [];
+        const seen = new Set<string>();
+        let firstError = "";
+
+        wizardVariables.forEach((item) => {
+          const name = item.name.trim();
+          const expression = item.expression.trim();
+          if (!name && !expression) {
+            return;
+          }
+          if (!name || !expression) {
+            const message = "Enter both a variable name and expression.";
+            issuesById[item.id] = message;
+            if (!firstError) {
+              firstError = message;
+            }
+            return;
+          }
+          if (!LAMBDA_IDENTIFIER_PATTERN.test(name)) {
+            const message = `Invalid variable name "${name}".`;
+            issuesById[item.id] = message;
+            if (!firstError) {
+              firstError = message;
+            }
+            return;
+          }
+          const key = name.toUpperCase();
+          if (seen.has(key)) {
+            const message = `Duplicate variable name "${name}".`;
+            issuesById[item.id] = message;
+            if (!firstError) {
+              firstError = message;
+            }
+            return;
+          }
+          seen.add(key);
+          preparedVars.push({ id: item.id, name, expression });
+        });
+
+        if (!firstError && preparedVars.length === 0) {
+          firstError = "LET builder requires at least one variable.";
+        }
+
+        const formula = firstError ? "" : buildLetFormula(preparedVars, returnExpression);
+        let testingFormula = formula;
+        let testingError = firstError;
+        let outputLabel = "LET final expression";
+
+        if (!firstError && wizardOutputTarget !== WIZARD_FINAL_OUTPUT_TARGET) {
+          const selectedVariable = preparedVars.find((item) => item.id === wizardOutputTarget);
+          if (selectedVariable) {
+            testingFormula = buildLetFormula(preparedVars, selectedVariable.name);
+            testingError = "";
+            outputLabel = `Variable ${selectedVariable.name}`;
+          } else {
+            const selectedDraft = wizardVariables.find((item) => item.id === wizardOutputTarget);
+            testingFormula = "";
+            testingError = "Select a complete variable to test formula output.";
+            outputLabel = selectedDraft?.name.trim()
+              ? `Variable ${selectedDraft.name.trim()}`
+              : "Selected variable";
+          }
+        }
+
+        return {
+          formula,
+          error: firstError,
+          testingFormula,
+          testingError,
+          outputLabel,
+          preparedVars,
+          issuesById,
+        };
+      }
+
       try {
-        const returnExpression = wizardReturnExpression.trim() || "0";
         const populatedVars = wizardVariables
           .map((item) => ({ name: item.name.trim(), expression: item.expression.trim() }))
           .filter((item) => item.name && item.expression);
@@ -876,13 +994,6 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
             ? `LET(${populatedVars.map((item) => `${item.name},${item.expression}`).join(",")},${returnExpression})`
             : returnExpression;
 
-        if (wizardTemplate === "LET") {
-          if (populatedVars.length === 0) {
-            throw new Error("LET builder requires at least one variable.");
-          }
-          return { formula: `=${letExpression}`, error: "" };
-        }
-
         const lambdaArgs = parseLambdaArgs(wizardArgsInput);
         lambdaArgs.forEach((arg) => {
           if (!LAMBDA_IDENTIFIER_PATTERN.test(arg)) {
@@ -893,11 +1004,33 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
           lambdaArgs.length > 0
             ? `=LAMBDA(${lambdaArgs.join(",")},${letExpression})`
             : `=LAMBDA(${letExpression})`;
-        return { formula: lambdaFormula, error: "" };
+        return {
+          formula: lambdaFormula,
+          error: "",
+          testingFormula: lambdaFormula,
+          testingError: "",
+          outputLabel: "Formula output",
+          preparedVars: [],
+          issuesById: {},
+        };
       } catch (error) {
-        return { formula: "", error: normalizeError(error) };
+        return {
+          formula: "",
+          error: normalizeError(error),
+          testingFormula: "",
+          testingError: normalizeError(error),
+          outputLabel: "Formula output",
+          preparedVars: [],
+          issuesById: {},
+        };
       }
-    }, [wizardArgsInput, wizardReturnExpression, wizardTemplate, wizardVariables]);
+    }, [
+      wizardArgsInput,
+      wizardOutputTarget,
+      wizardReturnExpression,
+      wizardTemplate,
+      wizardVariables,
+    ]);
     const activeLambdaArgs = useMemo(() => {
       if (authoringMode === "Wizard" && wizardTemplate === "LAMBDA") {
         return parseLambdaArgs(wizardArgsInput);
@@ -920,9 +1053,24 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
           ? { key: "editor", label: "Editor" }
           : { key: "wizard", label: "Wizard" }
       );
-      tabs.push({ key: "live-output", label: "Live Output" });
       return tabs;
     }, [authoringMode, creationMode, wizardTemplate]);
+
+    useEffect(() => {
+      let disposed = false;
+      void getActiveCellFormulaState()
+        .then((state) => {
+          if (!disposed) {
+            setActiveCell(state);
+          }
+        })
+        .catch(() => {
+          // Ignore transient host states until the user pulls explicitly.
+        });
+      return () => {
+        disposed = true;
+      };
+    }, []);
 
     useEffect(() => {
       if (!activeSubTab) {
@@ -933,6 +1081,19 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
       }
       setActiveSubTab(availableSubTabs[0]?.key ?? null);
     }, [activeSubTab, availableSubTabs]);
+
+    useEffect(() => {
+      if (wizardTemplate !== "LET") {
+        setWizardOutputTarget(WIZARD_FINAL_OUTPUT_TARGET);
+        return;
+      }
+      if (
+        wizardOutputTarget !== WIZARD_FINAL_OUTPUT_TARGET &&
+        !wizardVariables.some((item) => item.id === wizardOutputTarget)
+      ) {
+        setWizardOutputTarget(WIZARD_FINAL_OUTPUT_TARGET);
+      }
+    }, [wizardOutputTarget, wizardTemplate, wizardVariables]);
 
     useEffect(() => {
       let disposed = false;
@@ -993,14 +1154,9 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
       });
     }, []);
 
-    const refreshActiveCellContext = useCallback(async () => {
+    const pullFromActiveCell = useCallback(async (requireFormula: boolean) => {
       const state = await getActiveCellFormulaState();
       setActiveCell(state);
-      return state;
-    }, []);
-
-    const pullFromActiveCell = useCallback(async (requireFormula: boolean) => {
-      const state = await refreshActiveCellContext();
       if (!state.hasFormula) {
         if (requireFormula) {
           throw new Error(`Cell ${state.sheet}!${state.address} does not contain a formula.`);
@@ -1010,7 +1166,7 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
       setFormulaText(state.formula);
       lastSyncedFormulaRef.current = state.formula;
       return true;
-    }, [refreshActiveCellContext]);
+    }, []);
 
     const applyToActiveCell = useCallback(async () => {
       const normalized = (editorRef.current?.getValue() ?? formulaText).trim();
@@ -1076,60 +1232,6 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
     }, [loadSuggestions]);
 
     useEffect(() => {
-      void refreshActiveCellContext().catch(() => undefined);
-    }, [refreshActiveCellContext]);
-
-    useEffect(() => {
-      if (!autoCapture) return undefined;
-      let disposed = false;
-      let busy = false;
-      const timerId = window.setInterval(() => {
-        if (disposed || busy) return;
-        busy = true;
-        void (async () => {
-          try {
-            const state = await getActiveCellFormulaState();
-            if (disposed) return;
-            setActiveCell((prev) => {
-              if (
-                prev &&
-                prev.sheet === state.sheet &&
-                prev.address === state.address &&
-                prev.formula === state.formula &&
-                prev.hasFormula === state.hasFormula
-              ) {
-                return prev;
-              }
-              return state;
-            });
-            if (!state.hasFormula) return;
-            if (Date.now() < suppressAutoCaptureUntilRef.current) {
-              return;
-            }
-            const editorFocused = editorRef.current?.hasTextFocus() ?? editorHasFocus;
-            if (!editorFocused && state.formula !== formulaText) {
-              setFormulaText(state.formula);
-              lastSyncedFormulaRef.current = state.formula;
-            }
-          } catch {
-            // ignore transient excel editing states
-          } finally {
-            busy = false;
-          }
-        })();
-      }, 1100);
-
-      return () => {
-        disposed = true;
-        window.clearInterval(timerId);
-      };
-    }, [autoCapture, editorHasFocus, formulaText]);
-
-    useEffect(() => {
-      onFormulaChange?.(formulaText);
-    }, [formulaText, onFormulaChange]);
-
-    useEffect(() => {
       if (!isPopout || typeof Office === "undefined") {
         return undefined;
       }
@@ -1170,7 +1272,6 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
             : `=${incomingFormula}`;
           setFormulaText(normalizedFormula);
           lastSyncedFormulaRef.current = normalizedFormula;
-          suppressAutoCaptureUntilRef.current = Date.now() + 1800;
           if (typeof data.name === "string" && data.name.trim()) {
             setNamedFunctionName(data.name.trim());
           }
@@ -1207,14 +1308,6 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
             if (mapped.length > 0) {
               setWizardVariables(mapped);
             }
-          }
-          if (data.activeSubTab) {
-            setActiveSubTab(data.activeSubTab);
-          }
-          if (Array.isArray(data.lambdaTestInputs)) {
-            setLambdaTestInputs(
-              data.lambdaTestInputs.filter((item): item is string => typeof item === "string")
-            );
           }
           if (data.entryType === "Function") {
             setCreationMode("Function");
@@ -1302,6 +1395,151 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
       },
       [isPopout]
     );
+
+    useEffect(() => {
+      if (authoringMode !== "Wizard" || wizardTemplate !== "LET") {
+        setWizardVariableOutputs({});
+        setWizardResultOutput({ output: null, error: "" });
+        setWizardFormulaOutput({ output: null, error: "" });
+        setWizardOutputBusy(false);
+        setLastWizardOutputAt("");
+        return undefined;
+      }
+
+      let disposed = false;
+      const timerId = window.setTimeout(() => {
+        setWizardOutputBusy(true);
+        void (async () => {
+          const nextVariableOutputs: Record<string, WizardOutputState> = {};
+          const preparedPrefix: PreparedWizardLetVariable[] = [];
+          const preparedMap = new Map(
+            wizardPreview.preparedVars.map((item) => [item.id, item] as const)
+          );
+
+          for (const item of wizardVariables) {
+            const name = item.name.trim();
+            const expression = item.expression.trim();
+            if (!name && !expression) {
+              nextVariableOutputs[item.id] = {
+                output: null,
+                error: "Enter a variable name and expression to preview this step.",
+              };
+              continue;
+            }
+
+            const issue = wizardPreview.issuesById[item.id];
+            if (issue) {
+              nextVariableOutputs[item.id] = { output: null, error: issue };
+              continue;
+            }
+
+            const preparedItem = preparedMap.get(item.id);
+            if (!preparedItem) {
+              nextVariableOutputs[item.id] = {
+                output: null,
+                error: "Complete this variable before previewing it.",
+              };
+              continue;
+            }
+
+            try {
+              const result = await evaluateFormulaForLive(
+                buildLetFormula([...preparedPrefix, preparedItem], preparedItem.name)
+              );
+              if (disposed) {
+                return;
+              }
+              nextVariableOutputs[item.id] = {
+                output: result,
+                error: result.hasError
+                  ? `Variable preview returned ${getFirstErrorCell(result)}.`
+                  : "",
+              };
+            } catch (error) {
+              if (disposed) {
+                return;
+              }
+              nextVariableOutputs[item.id] = {
+                output: null,
+                error: normalizeError(error),
+              };
+            }
+
+            preparedPrefix.push(preparedItem);
+          }
+
+          let nextResultOutput: WizardOutputState =
+            wizardPreview.error || !wizardPreview.formula
+              ? { output: null, error: wizardPreview.error }
+              : { output: null, error: "" };
+
+          if (!nextResultOutput.error && wizardPreview.formula) {
+            try {
+              const result = await evaluateFormulaForLive(wizardPreview.formula);
+              if (disposed) {
+                return;
+              }
+              nextResultOutput = {
+                output: result,
+                error: result.hasError ? `Result preview returned ${getFirstErrorCell(result)}.` : "",
+              };
+            } catch (error) {
+              if (disposed) {
+                return;
+              }
+              nextResultOutput = { output: null, error: normalizeError(error) };
+            }
+          }
+
+          let nextFormulaOutput: WizardOutputState;
+          if (wizardPreview.testingFormula && wizardPreview.testingFormula === wizardPreview.formula) {
+            nextFormulaOutput = nextResultOutput;
+          } else if (wizardPreview.testingError || !wizardPreview.testingFormula) {
+            nextFormulaOutput = { output: null, error: wizardPreview.testingError };
+          } else {
+            try {
+              const result = await evaluateFormulaForLive(wizardPreview.testingFormula);
+              if (disposed) {
+                return;
+              }
+              nextFormulaOutput = {
+                output: result,
+                error: result.hasError ? `Formula output returned ${getFirstErrorCell(result)}.` : "",
+              };
+            } catch (error) {
+              if (disposed) {
+                return;
+              }
+              nextFormulaOutput = { output: null, error: normalizeError(error) };
+            }
+          }
+
+          if (disposed) {
+            return;
+          }
+
+          setWizardVariableOutputs(nextVariableOutputs);
+          setWizardResultOutput(nextResultOutput);
+          setWizardFormulaOutput(nextFormulaOutput);
+          setLastWizardOutputAt(new Date().toLocaleTimeString());
+        })().finally(() => {
+          if (!disposed) {
+            setWizardOutputBusy(false);
+          }
+        });
+      }, 320);
+
+      return () => {
+        disposed = true;
+        window.clearTimeout(timerId);
+      };
+    }, [
+      authoringMode,
+      evaluateFormulaForLive,
+      wizardPreview,
+      wizardTemplate,
+      wizardVariables,
+    ]);
 
     useEffect(() => {
       const normalized = formulaText.trim();
@@ -1492,12 +1730,6 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
         editor.onDidChangeModelContent(() => {
           setFormulaText(editor.getValue());
         });
-        editor.onDidFocusEditorText(() => {
-          setEditorHasFocus(true);
-        });
-        editor.onDidBlurEditorText(() => {
-          setEditorHasFocus(false);
-        });
       },
       []
     );
@@ -1616,8 +1848,6 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
           name: item.name,
           expression: item.expression,
         })),
-        activeSubTab: activeSubTab ?? "editor",
-        lambdaTestInputs,
       });
     };
 
@@ -1664,31 +1894,37 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
     };
 
     const runLambdaInputTest = async () => {
-      await runAction("Run lambda input test", async () => {
-        if (authoringMode === "Wizard" && wizardTemplate === "LET") {
-          throw new Error("Switch wizard type to LAMBDA before running lambda input tests.");
-        }
-        const lambdaFormula =
-          authoringMode === "Wizard" && wizardTemplate === "LAMBDA"
-            ? wizardPreview.formula
-            : buildNamedFunctionFormula(
-                (editorRef.current?.getValue() ?? formulaText).trim(),
-                stringifyArgs(mergeArgsWithDraft(namedFunctionArgs, namedFunctionArgDraft))
-              );
-        const invokeFormula = buildLambdaInvokeFormula(lambdaFormula, lambdaTestInputs);
-        setLastTestInvocation(invokeFormula);
-        const result = await evaluateFormulaForLive(invokeFormula);
-        setFormulaOutput(result);
-        setLastTestedAt(new Date().toLocaleTimeString());
-        if (result.hasError) {
-          const errorText = getFirstErrorCell(result);
-          setLiveTestError(`Lambda test returned ${errorText}.`);
-          throw new Error(
-            `Lambda invocation returned ${errorText}. Check arguments and LET/LAMBDA structure.`
-          );
-        }
-        setLiveTestError("");
-      });
+      setLambdaTestBusy(true);
+      setLambdaTestError("");
+      try {
+        await runAction("Run lambda input test", async () => {
+          if (authoringMode === "Wizard" && wizardTemplate === "LET") {
+            throw new Error("Switch wizard type to LAMBDA before running lambda input tests.");
+          }
+          const lambdaFormula =
+            authoringMode === "Wizard" && wizardTemplate === "LAMBDA"
+              ? wizardPreview.formula
+              : buildNamedFunctionFormula(
+                  (editorRef.current?.getValue() ?? formulaText).trim(),
+                  stringifyArgs(mergeArgsWithDraft(namedFunctionArgs, namedFunctionArgDraft))
+                );
+          const invokeFormula = buildLambdaInvokeFormula(lambdaFormula, lambdaTestInputs);
+          setLastTestInvocation(invokeFormula);
+          const result = await evaluateFormulaForLive(invokeFormula);
+          setLambdaTestOutput(result);
+          setLastLambdaTestedAt(new Date().toLocaleTimeString());
+          if (result.hasError) {
+            const errorText = getFirstErrorCell(result);
+            setLambdaTestError(`Lambda test returned ${errorText}.`);
+            throw new Error(
+              `Lambda invocation returned ${errorText}. Check arguments and LET/LAMBDA structure.`
+            );
+          }
+          setLambdaTestError("");
+        });
+      } finally {
+        setLambdaTestBusy(false);
+      }
     };
 
     const handleNamedArgInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
@@ -1736,101 +1972,115 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
       getCurrentFormula: () => (editorRef.current?.getValue() ?? formulaText).trim(),
     }));
 
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-    const editorLineHeight = 23;
-    const defaultVisibleLines = isPopout ? 18 : 14;
-    const editorVerticalChrome = isPopout ? 164 : 146;
-    const compactEditorHeight = editorLineHeight * defaultVisibleLines + editorVerticalChrome;
-    const expandedEditorHeight = compactEditorHeight + (isPopout ? 244 : 204);
-=======
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
+    const renderOutputPanel = ({
+      title,
+      idleMessage,
+      busyMessage,
+      successPrefix,
+      output,
+      busy,
+      error,
+      testedAt,
+      showInvocation = false,
+      className = "",
+    }: {
+      title: string;
+      idleMessage: string;
+      busyMessage: string;
+      successPrefix: string;
+      output: FormulaEvaluationResult | null;
+      busy: boolean;
+      error: string;
+      testedAt: string;
+      showInvocation?: boolean;
+      className?: string;
+    }) => {
+      const statusText = busy
+        ? busyMessage
+        : error
+          ? `Last calculation failed${testedAt ? ` at ${testedAt}` : ""}`
+          : testedAt
+            ? `${successPrefix}${testedAt ? ` at ${testedAt}` : ""}`
+            : idleMessage;
+
+      return (
+        <div className={className ? `${styles.editorFooter} ${className}` : styles.editorFooter}>
+          <div className={styles.liveTestHeader}>
+            <Text className={shared.cardTitle}>{title}</Text>
+            <Text className={shared.mutedText}>{statusText}</Text>
+          </div>
+
+          {showInvocation && lastTestInvocation ? (
+            <Text className={styles.invocationText}>Invocation: {lastTestInvocation}</Text>
+          ) : null}
+          {error ? <Text className={shared.errorText}>{error}</Text> : null}
+
+          <div className={styles.outputWrap}>
+            {output ? (
+              <table className={styles.outputTable}>
+                <tbody>
+                  {output.values.map((row, rowIndex) => (
+                    <tr key={rowIndex}>
+                      {row.map((cell, colIndex) => (
+                        <td key={`${rowIndex}-${colIndex}`} className={styles.outputCell}>
+                          {cell === null ? "" : String(cell)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <div className={styles.outputCell}>
+                <Text className={shared.mutedText}>{idleMessage}</Text>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    };
+
+    const renderCompactOutput = (
+      state: WizardOutputState | undefined,
+      idleMessage: string,
+      busyMessage = "Updating preview..."
+    ) => {
+      const message = wizardOutputBusy ? busyMessage : idleMessage;
+
+      return (
+        <div className={styles.wizardOutputStack}>
+          {state?.error ? <Text className={shared.errorText}>{state.error}</Text> : null}
+          <div className={styles.outputWrap}>
+            {state?.output ? (
+              <table className={styles.outputTable}>
+                <tbody>
+                  {state.output.values.map((row, rowIndex) => (
+                    <tr key={rowIndex}>
+                      {row.map((cell, colIndex) => (
+                        <td key={`${rowIndex}-${colIndex}`} className={styles.outputCell}>
+                          {cell === null ? "" : String(cell)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <div className={styles.outputCell}>
+                <Text className={shared.mutedText}>
+                  {state?.error ? idleMessage : message}
+                </Text>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    };
+
     const editorLineHeight = 22;
-    const defaultVisibleLines = 14;
-    const editorVerticalChrome = 190;
-    const compactEditorHeight =
-      editorLineHeight * defaultVisibleLines + editorVerticalChrome + (isPopout ? 80 : 0);
-    const expandedEditorHeight = compactEditorHeight + (isPopout ? 320 : 280);
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-    const editorHeight = `${isEditorExpanded ? expandedEditorHeight : compactEditorHeight}px`;
-    const editorHeightClass = isPopout
-      ? isEditorExpanded
-        ? styles.editorHeightPopoutExpanded
-        : styles.editorHeightPopoutCompact
-      : isEditorExpanded
-        ? styles.editorHeightExpanded
-        : styles.editorHeightCompact;
-
-    const renderLiveOutputPanel = (title: string) => (
-      <>
-        <div className={styles.liveTestHeader}>
-          <Text className={shared.cardTitle}>{title}</Text>
-          <Text className={shared.mutedText}>
-            {liveTestBusy
-              ? "Testing..."
-              : liveTestError
-                ? `Last test failed${lastTestedAt ? ` at ${lastTestedAt}` : ""}`
-                : lastTestedAt
-                  ? `Auto-tested at ${lastTestedAt}`
-                  : "Waiting for formula input"}
-          </Text>
-        </div>
-
-        {lastTestInvocation ? (
-          <Text className={styles.invocationText}>Invocation: {lastTestInvocation}</Text>
-        ) : null}
-        {liveTestError ? <Text className={shared.errorText}>{liveTestError}</Text> : null}
-
-        <div className={styles.outputWrap}>
-          {formulaOutput ? (
-            <table className={styles.outputTable}>
-              <tbody>
-                {formulaOutput.values.map((row, rowIndex) => (
-                  <tr key={rowIndex}>
-                    {row.map((cell, colIndex) => (
-                      <td key={`${rowIndex}-${colIndex}`} className={styles.outputCell}>
-                        {cell === null ? "" : String(cell)}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : (
-            <div className={styles.outputCell}>
-              <Text className={shared.mutedText}>
-                Live test will render results here as you edit.
-              </Text>
-            </div>
-          )}
-        </div>
-      </>
-    );
 
     return (
-      <div className={styles.root}>
+      <div className={`${styles.root} ${embedded ? styles.rootEmbedded : ""}`}>
         {!isPopout && !embedded ? (
           <div>
             <Text className={shared.sectionTitle}>Formulas</Text>
@@ -1840,30 +2090,13 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
           </div>
         ) : null}
 
-        <div className={styles.card}>
-          <div className={styles.autoCaptureRow}>
-            <div className={styles.contextTopRow}>
-              <Text className={shared.mutedText}>
-                Active Cell:{" "}
-                {activeCell ? `${activeCell.sheet}!${activeCell.address}` : "not captured"}
-                {" • "}
-                <span className={styles.connectedText}>Connected</span>
-                {loadingMetadata ? " • loading suggestions..." : ""}
-              </Text>
-              <label className={styles.checkboxLabel}>
-                <input
-                  type="checkbox"
-                  aria-label="Live sync editor with active cell"
-                  checked={autoCapture}
-                  onChange={(event) => setAutoCapture(event.target.checked)}
-                />{" "}
-                Live sync active cell
-              </label>
-            </div>
-            <Text className={styles.contextHint}>
-              Use current sheet selection directly in the editor. Live sync stays off by default so
-              typing in the editor is preserved unless you explicitly enable it.
+        <div className={`${styles.card} ${embedded ? styles.cardEmbedded : ""}`}>
+          <div className={styles.sectionInfoRow}>
+            <Text className={shared.mutedText}>
+              Active Cell: {activeCell ? `${activeCell.sheet}!${activeCell.address}` : "not linked"}
+              {loadingMetadata ? " • loading suggestions..." : ""}
             </Text>
+            <Text className={shared.mutedText}>Manual sync only. Use Pull Active Formula when needed.</Text>
           </div>
 
           <div className={styles.modeRow}>
@@ -1994,43 +2227,39 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
                       appearance="primary"
                       size="small"
                       onClick={() => void runLambdaInputTest()}
+                      disabled={lambdaTestBusy}
                     >
                       Run Lambda Test
                     </Button>
                   </div>
+                  {renderOutputPanel({
+                    title: "Lambda Test Output",
+                    idleMessage: "Run a lambda test to render results here.",
+                    busyMessage: "Running lambda test...",
+                    successPrefix: "Lambda test updated",
+                    output: lambdaTestOutput,
+                    busy: lambdaTestBusy,
+                    error: lambdaTestError,
+                    testedAt: lastLambdaTestedAt,
+                    showInvocation: true,
+                  })}
                 </>
               ) : null}
 
               {activeSubTab === "editor" && authoringMode === "Editor" ? (
                 <div className={styles.editorShell}>
-<<<<<<< ours
-                  <div className={styles.editorWorkspaceHeader}>
-                    <div className={styles.editorWorkspaceMeta}>
-                      <Text className={styles.editorWorkspaceTitle}>Formula Workspace</Text>
-                      <Text className={styles.editorWorkspaceHint}>
-                        Pull from the active cell when needed, or drop the current sheet selection
-                        into the formula without leaving the editor.
-                      </Text>
-                    </div>
-                    <div className={styles.editorHeaderActions}>
-=======
-                  <div className={styles.overlayTop}>
-                    <Button size="small" onClick={() => void runAction("Beautify formula", beautify)}>
-                      Beautify
-                    </Button>
-                    <Button size="small" onClick={() => void runAction("Insert selection", insertSelection)}>
-                      Insert Selection
-                    </Button>
-                    <Button
-                      size="small"
-                      icon={<ArrowExpand20Regular />}
-                      title={isEditorExpanded ? "Use smaller editor" : "Expand editor workspace"}
-                      onClick={() => setIsEditorExpanded((prev) => !prev)}
-                    >
-                      {isEditorExpanded ? "Collapse" : "Expand"}
-                    </Button>
-                    {!isPopout ? (
->>>>>>> theirs
+                  <div className={styles.editorToolbar}>
+                    <div className={styles.editorToolbarButtons}>
+                      <Button
+                        size="small"
+                        onClick={() =>
+                          void runAction("Pull active formula", async () => {
+                            await pullFromActiveCell(true);
+                          })
+                        }
+                      >
+                        Pull Active Formula
+                      </Button>
                       <Button
                         size="small"
                         onClick={() => void runAction("Beautify formula", beautify)}
@@ -2039,111 +2268,10 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
                       </Button>
                       <Button
                         size="small"
-                        onClick={() => void runAction("Use current selection", insertSelection)}
+                        onClick={() => void runAction("Insert selection", insertSelection)}
                       >
-                        Use Current Selection
+                        Insert Selection
                       </Button>
-                      <Button
-                        size="small"
-                        icon={
-                          isEditorExpanded ? (
-                            <ArrowMinimizeVertical20Regular />
-                          ) : (
-                            <ArrowExpand20Regular />
-                          )
-                        }
-                        onClick={() => setIsEditorExpanded((prev) => !prev)}
-                      >
-                        {isEditorExpanded ? "Compact" : "Expand"}
-                      </Button>
-                      {!isPopout ? (
-                        <Button
-                          size="small"
-                          icon={<Open20Regular />}
-                          onClick={() =>
-                            void runAction("Open formula editor popout", openPopoutWithCurrentState)
-                          }
-                        >
-                          Pop Out
-                        </Button>
-                      ) : null}
-                      {!isPopout ? (
-                        <Button size="small" onClick={onOpenLegacy}>
-                          Legacy View
-                        </Button>
-                      ) : null}
-                    </div>
-                  </div>
-
-                  <div className={styles.editorWrap}>
-                    {editorLoadError ? (
-                      <textarea
-                        aria-label="Formula editor fallback"
-                        className={`${styles.fallbackEditor} ${editorHeightClass}`}
-                        spellCheck={false}
-                        rows={16}
-                        value={formulaText}
-                        onChange={(event) => setFormulaText(event.target.value)}
-                        onFocus={() => setEditorHasFocus(true)}
-                        onBlur={() => setEditorHasFocus(false)}
-                      />
-                    ) : editorReady ? (
-                      <Editor
-                        height={editorHeight}
-                        language={MONACO_LANGUAGE_ID}
-                        value={formulaText}
-                        beforeMount={beforeMount}
-                        onMount={onMount}
-                        theme="vs"
-                        options={{
-                          minimap: { enabled: false },
-                          scrollBeyondLastLine: false,
-                          fontSize: 14,
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-                          fontFamily: "Consolas, 'Cascadia Mono', 'Courier New', monospace",
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-                          lineHeight: editorLineHeight,
-                          lineNumbers: "on",
-                          wordWrap: "on",
-                          automaticLayout: true,
-                          suggestOnTriggerCharacters: true,
-                          quickSuggestions: { other: true, comments: false, strings: false },
-                          wordBasedSuggestions: "off",
-                          tabCompletion: "on",
-                          padding: {
-                            top: 16,
-                            bottom: 24,
-                          },
-                          suggest: {
-                            showWords: false,
-                            showSnippets: true,
-                            preview: true,
-                          },
-                        }}
-                      />
-                    ) : (
-                      <div className={`${styles.editorLoading} ${editorHeightClass}`}>
-                        <Text className={shared.mutedText}>Loading formula editor...</Text>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className={styles.actionDock}>
-                    <Text className={styles.overlayTitle}>Apply / Save</Text>
-                    <div className={styles.actionRow}>
                       <Button
                         appearance="primary"
                         size="small"
@@ -2160,7 +2288,102 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
                           Save Named Function
                         </Button>
                       )}
+                      {!isPopout ? (
+                        <Button
+                          size="small"
+                          onClick={() =>
+                            void runAction(
+                              "Open formula editor popout",
+                              openPopoutWithCurrentState
+                            )
+                          }
+                        >
+                          Open Pop-out
+                        </Button>
+                      ) : null}
+                      {!isPopout ? (
+                        <Button size="small" onClick={onOpenLegacy}>
+                          Legacy View
+                        </Button>
+                      ) : null}
                     </div>
+                    <div className={styles.editorToolbarMeta}>
+                      <Text className={shared.mutedText}>
+                        {activeCell
+                          ? `Editing against ${activeCell.sheet}!${activeCell.address}`
+                          : "Pull a worksheet formula to load it into the editor."}
+                      </Text>
+                      <Text className={styles.editorResizeHint}>
+                        Drag the editor's bottom edge to resize it. Calculate output stays pinned below.
+                      </Text>
+                    </div>
+                  </div>
+
+                  <div className={styles.editorStage}>
+                    <div
+                      className={`${styles.editorWrap} ${styles.editorWrapResizable} ${
+                        isPopout ? styles.editorWrapResizablePopout : ""
+                      }`}
+                    >
+                      {editorLoadError ? (
+                        <textarea
+                          aria-label="Formula editor fallback"
+                          className={styles.fallbackEditor}
+                          spellCheck={false}
+                          rows={10}
+                          style={{ height: "100%" }}
+                          value={formulaText}
+                          onChange={(event) => setFormulaText(event.target.value)}
+                        />
+                      ) : editorReady ? (
+                        <Editor
+                          height="100%"
+                          language={MONACO_LANGUAGE_ID}
+                          value={formulaText}
+                          beforeMount={beforeMount}
+                          onMount={onMount}
+                          theme="vs"
+                          options={{
+                            minimap: { enabled: false },
+                            scrollBeyondLastLine: false,
+                            fontSize: 14,
+                            lineHeight: editorLineHeight,
+                            lineNumbers: "on",
+                            wordWrap: "on",
+                            automaticLayout: true,
+                            suggestOnTriggerCharacters: true,
+                            quickSuggestions: { other: true, comments: false, strings: false },
+                            wordBasedSuggestions: "off",
+                            tabCompletion: "on",
+                            padding: {
+                              top: 12,
+                              bottom: 12,
+                            },
+                            suggest: {
+                              showWords: false,
+                              showSnippets: true,
+                              preview: true,
+                            },
+                          }}
+                        />
+                      ) : (
+                        <div className={styles.editorLoading} style={{ height: "100%" }}>
+                          <Text className={shared.mutedText}>Loading formula editor...</Text>
+                        </div>
+                      )}
+                    </div>
+
+                    {renderOutputPanel({
+                      title: "Calculate Output",
+                      idleMessage: "Results update here as you edit the formula.",
+                      busyMessage: "Calculating...",
+                      successPrefix: "Updated",
+                      output: formulaOutput,
+                      busy: liveTestBusy,
+                      error: liveTestError,
+                      testedAt: lastTestedAt,
+                      className: styles.editorFooterPinned,
+                    })}
                   </div>
                 </div>
               ) : null}
@@ -2188,43 +2411,149 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
                       />
                     </div>
                   ) : null}
-                  <div className={styles.modeRow}>
-                    <Text className={styles.modalLabel}>Variables</Text>
+                  <Text className={styles.modalLabel}>Variables</Text>
+                  <div className={styles.wizardList}>
+                    {wizardVariables.map((item, index) => (
+                      <div key={item.id} className={styles.wizardCard}>
+                        <div className={styles.wizardCardHeader}>
+                          <div className={styles.wizardCardHeading}>
+                            <Text className={styles.wizardCardTitle}>Variable {index + 1}</Text>
+                            <Text className={styles.wizardCardHint}>
+                              {wizardTemplate === "LET"
+                                ? "Preview each LET step and optionally route formula output through this variable."
+                                : "Optional LET variable for the lambda body."}
+                            </Text>
+                          </div>
+                          <div className={styles.wizardCardActions}>
+                            {wizardTemplate === "LET" ? (
+                              <Checkbox
+                                checked={wizardOutputTarget === item.id}
+                                label="Use as formula output"
+                                onChange={(_, data) =>
+                                  setWizardOutputTarget(
+                                    data.checked ? item.id : WIZARD_FINAL_OUTPUT_TARGET
+                                  )
+                                }
+                              />
+                            ) : null}
+                            <Button
+                              appearance="subtle"
+                              size="small"
+                              icon={<Delete20Regular />}
+                              title="Delete variable"
+                              aria-label={`Delete variable ${index + 1}`}
+                              onClick={() => removeWizardVariable(item.id)}
+                            />
+                          </div>
+                        </div>
+                        <div className={styles.wizardCardFields}>
+                          <div>
+                            <Text className={styles.modalLabel}>Variable name</Text>
+                            <Input
+                              placeholder="greeting"
+                              value={item.name}
+                              onChange={(_, data) =>
+                                updateWizardVariable(item.id, "name", data.value)
+                              }
+                            />
+                          </div>
+                          <div>
+                            <Text className={styles.modalLabel}>Expression</Text>
+                            <Input
+                              placeholder={'"Hello"'}
+                              value={item.expression}
+                              onChange={(_, data) =>
+                                updateWizardVariable(item.id, "expression", data.value)
+                              }
+                            />
+                          </div>
+                        </div>
+                        {wizardTemplate === "LET" ? (
+                          <div className={styles.wizardOutputStack}>
+                            <Text className={styles.wizardOutputLabel}>Variable Output</Text>
+                            {renderCompactOutput(
+                              wizardVariableOutputs[item.id],
+                              "This variable preview appears once the name and expression are complete."
+                            )}
+                          </div>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                  <div className={styles.wizardAddRow}>
                     <Button size="small" onClick={addWizardVariable}>
                       + Add Variable
                     </Button>
                   </div>
-                  {wizardVariables.map((item) => (
-                    <div key={item.id} className={styles.wizardVarRow}>
+                  {wizardTemplate === "LET" ? (
+                    <>
+                      <div className={styles.wizardCard}>
+                        <div className={styles.wizardCardHeader}>
+                          <div className={styles.wizardCardHeading}>
+                            <Text className={styles.wizardCardTitle}>Final Expression</Text>
+                            <Text className={styles.wizardCardHint}>
+                              This is the real LET return expression that will be built into the
+                              editor.
+                            </Text>
+                          </div>
+                          <div className={styles.wizardCardActions}>
+                            <Checkbox
+                              checked={wizardOutputTarget === WIZARD_FINAL_OUTPUT_TARGET}
+                              label="Use as formula output"
+                              onChange={(_, data) =>
+                                setWizardOutputTarget(
+                                  data.checked
+                                    ? WIZARD_FINAL_OUTPUT_TARGET
+                                    : WIZARD_FINAL_OUTPUT_TARGET
+                                )
+                              }
+                            />
+                          </div>
+                        </div>
+                        <div>
+                          <Text className={styles.modalLabel}>Expression</Text>
+                          <Input
+                            placeholder="greeting&audience"
+                            value={wizardReturnExpression}
+                            onChange={(_, data) => setWizardReturnExpression(data.value)}
+                          />
+                        </div>
+                        <div className={styles.wizardOutputStack}>
+                          <Text className={styles.wizardOutputLabel}>Final Expression Output</Text>
+                          {renderCompactOutput(
+                            wizardResultOutput,
+                            "The LET final expression result will preview here."
+                          )}
+                        </div>
+                      </div>
+                      {renderOutputPanel({
+                        title: `Formula Output: ${wizardPreview.outputLabel}`,
+                        idleMessage: "Formula output updates as you switch output targets.",
+                        busyMessage: "Updating formula output...",
+                        successPrefix: "Updated",
+                        output: wizardFormulaOutput.output,
+                        busy: wizardOutputBusy,
+                        error: wizardFormulaOutput.error,
+                        testedAt: lastWizardOutputAt,
+                      })}
+                    </>
+                  ) : (
+                    <div>
+                      <Text className={styles.modalLabel}>Return expression</Text>
                       <Input
-                        placeholder="name"
-                        value={item.name}
-                        onChange={(_, data) => updateWizardVariable(item.id, "name", data.value)}
+                        placeholder="Result expression"
+                        value={wizardReturnExpression}
+                        onChange={(_, data) => setWizardReturnExpression(data.value)}
                       />
-                      <Input
-                        placeholder="expression/value"
-                        value={item.expression}
-                        onChange={(_, data) =>
-                          updateWizardVariable(item.id, "expression", data.value)
-                        }
-                      />
-                      <Button size="small" onClick={() => removeWizardVariable(item.id)}>
-                        Remove
-                      </Button>
                     </div>
-                  ))}
-                  <div>
-                    <Text className={styles.modalLabel}>
-                      {wizardTemplate === "LAMBDA" ? "Return expression" : "LET final expression"}
-                    </Text>
-                    <Input
-                      placeholder="Result expression"
-                      value={wizardReturnExpression}
-                      onChange={(_, data) => setWizardReturnExpression(data.value)}
-                    />
-                  </div>
+                  )}
                   <div>
                     <Text className={styles.modalLabel}>Wizard preview</Text>
+                    {wizardTemplate === "LET" ? (
+                      <Text className={shared.mutedText}>
+                        Testing output target: {wizardPreview.outputLabel}
+                      </Text>
+                    ) : null}
                     {wizardPreview.error ? (
                       <Text className={shared.errorText}>{wizardPreview.error}</Text>
                     ) : (
@@ -2240,12 +2569,6 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
                 </>
               ) : null}
 
-              {activeSubTab === "live-output" ? renderLiveOutputPanel("Live Test Output") : null}
-              {isPopout && activeSubTab !== "live-output" ? (
-                <div className={styles.popoutLiveOutputPanel}>
-                  {renderLiveOutputPanel("Active Output")}
-                </div>
-              ) : null}
             </div>
           ) : null}
 

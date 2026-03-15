@@ -5,6 +5,7 @@ export interface NamedRangeRecord {
   kind: "NamedRange" | "Shape";
   name: string;
   address: string;
+  formula: string;
   sheet: string;
   scope: string;
   scopeType: "Workbook" | "Worksheet";
@@ -31,24 +32,6 @@ export interface TableRecord {
 
 export interface TableColumnRecord {
   id: string;
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-  tableName: string;
-  name: string;
-  address: string;
-  sheet: string;
-=======
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
   name: string;
   address: string;
 }
@@ -60,19 +43,6 @@ export interface CreateNamedRangesFromTableRequest {
   scopeType: "Workbook" | "Worksheet";
   conflictMode: "prefix" | "suffix" | "rename";
   conflictValue: string;
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
 }
 
 export interface FormulaEvaluationResult {
@@ -422,8 +392,6 @@ interface FormulaDialogOpenFormulaMessage {
   wizardArgs?: string;
   wizardReturnExpression?: string;
   wizardVariables?: Array<{ name: string; expression: string }>;
-  activeSubTab?: "metadata" | "lambda-test" | "editor" | "wizard" | "live-output";
-  lambdaTestInputs?: string[];
 }
 
 async function runFormattingCommand(command: (context: Excel.RequestContext) => Promise<void>) {
@@ -2669,10 +2637,6 @@ function applyShapeBuilderMetadata(shape: Excel.Shape, metadataInput: ShapeBuild
     shape.altTextDescription = `${NAV_TARGET_PREFIX}url::${metadata.externalUrl}`;
     return;
   }
-  if (metadata.anchorAddress) {
-    shape.altTextDescription = `${SHAPE_ANCHOR_PREFIX}${metadata.anchorAddress}`;
-    return;
-  }
   shape.altTextDescription = "";
 }
 
@@ -3083,6 +3047,7 @@ export async function getNamedRanges(): Promise<NamedRangeRecord[]> {
         continue;
       }
       const normalizedFormula = normalizeDisplayAddress(namedItem.formula);
+      const rawFormula = normalizeFormulaExpression(asString(namedItem.formula));
       const parsed = splitQualifiedAddress(namedItem.formula);
       const isRange =
         parsed.sheet.length > 0 &&
@@ -3097,6 +3062,7 @@ export async function getNamedRanges(): Promise<NamedRangeRecord[]> {
           isRange && parsed.sheet && parsed.address
             ? toQualifiedAddress(parsed.sheet, parsed.address)
             : normalizedFormula,
+        formula: rawFormula,
         sheet: resolvedSheet,
         scope: "Workbook",
         scopeType: "Workbook",
@@ -3126,6 +3092,7 @@ export async function getNamedRanges(): Promise<NamedRangeRecord[]> {
           continue;
         }
         const normalizedFormula = normalizeDisplayAddress(namedItem.formula);
+        const rawFormula = normalizeFormulaExpression(asString(namedItem.formula));
         const parsed = splitQualifiedAddress(namedItem.formula);
         const isRange = parsed.address.length > 0 && isCellAddressExpression(parsed.address);
         const resolvedSheet = parsed.sheet || map.sheetName;
@@ -3137,6 +3104,7 @@ export async function getNamedRanges(): Promise<NamedRangeRecord[]> {
             isRange && resolvedSheet && parsed.address
               ? toQualifiedAddress(resolvedSheet, parsed.address)
               : normalizedFormula,
+          formula: rawFormula,
           sheet: resolvedSheet,
           scope: map.sheetName,
           scopeType: "Worksheet",
@@ -3159,6 +3127,7 @@ export async function getNamedRanges(): Promise<NamedRangeRecord[]> {
           kind: "Shape",
           name: shape.name,
           address: toQualifiedAddress(map.sheetName, "[Shape]"),
+          formula: "",
           sheet: map.sheetName,
           scope: map.sheetName,
           scopeType: "Worksheet",
@@ -3418,93 +3387,6 @@ export async function getTables(): Promise<TableRecord[]> {
   });
 }
 
-export async function selectTableRange(sheetName: string, tableName: string): Promise<void> {
-  await Excel.run(async (context) => {
-    const sheet = context.workbook.worksheets.getItem(sheetName);
-    const table = sheet.tables.getItem(tableName);
-    const range = table.getRange();
-    sheet.activate();
-    range.select();
-    await context.sync();
-  });
-}
-
-export async function getTableFromCurrentSelection(): Promise<TableRecord | null> {
-  return Excel.run(async (context) => {
-    const selection = context.workbook.getSelectedRange();
-    selection.load("worksheet/name");
-
-    const tableMatches = selection.getTables(false);
-    tableMatches.load("items");
-    tableMatches.load("items/name");
-    await context.sync();
-
-    const matchedTables = tableMatches.items;
-    if (matchedTables.length === 0) {
-      return null;
-    }
-
-    const [table] = matchedTables;
-    const range = table.getRange();
-    range.load("address");
-    await context.sync();
-
-    const normalizedAddress = range.address.includes("!")
-      ? range.address.split("!").slice(1).join("!")
-      : range.address;
-
-    return {
-      id: `${selection.worksheet.name}::${table.name}`,
-      name: table.name,
-      address: `${quoteSheetName(selection.worksheet.name)}!${normalizedAddress}`,
-      sheet: selection.worksheet.name,
-      scope: "Worksheet",
-    };
-  });
-}
-
-export async function getTableColumns(
-  sheetName: string,
-  tableName: string
-): Promise<TableColumnRecord[]> {
-  return Excel.run(async (context) => {
-    const sheet = context.workbook.worksheets.getItem(sheetName);
-    const table = sheet.tables.getItem(tableName);
-    table.load("columns");
-    await context.sync();
-
-    const columns = table.columns;
-    columns.load("items");
-    columns.load("items/name");
-    await context.sync();
-
-    const columnRanges = columns.items.map((column) => {
-      let range: Excel.Range;
-      try {
-        range = column.getDataBodyRange();
-      } catch {
-        range = column.getRange();
-      }
-      range.load("address");
-      return { column, range };
-    });
-    await context.sync();
-
-    return columnRanges.map(({ column, range }) => {
-      const normalizedAddress = range.address.includes("!")
-        ? range.address.split("!").slice(1).join("!")
-        : range.address;
-      return {
-        id: `${sheetName}::${tableName}::${column.name}`,
-        tableName,
-        name: column.name,
-        address: `${quoteSheetName(sheetName)}!${normalizedAddress}`,
-        sheet: sheetName,
-      };
-    });
-  });
-}
-
 export async function saveNamedFunction(name: string, lambdaFormula: string) {
   const trimmedName = name.trim();
   if (!trimmedName) {
@@ -3750,7 +3632,10 @@ export async function selectTableAddress(address: string, fallbackSheet: string)
   });
 }
 
-export async function getTableColumns(sheetName: string, tableName: string): Promise<TableColumnRecord[]> {
+export async function getTableColumns(
+  sheetName: string,
+  tableName: string
+): Promise<TableColumnRecord[]> {
   return Excel.run(async (context) => {
     const sheet = context.workbook.worksheets.getItem(sheetName);
     const table = sheet.tables.getItem(tableName);
@@ -3776,7 +3661,9 @@ export async function createNamedRangesFromTableColumns(
   request: CreateNamedRangesFromTableRequest
 ): Promise<{ created: string[]; skipped: string[] }> {
   return Excel.run(async (context) => {
-    const table = context.workbook.worksheets.getItem(request.sheetName).tables.getItem(request.tableName);
+    const table = context.workbook.worksheets
+      .getItem(request.sheetName)
+      .tables.getItem(request.tableName);
     table.columns.load("items/name");
 
     const workbookNames = context.workbook.names;
@@ -4059,15 +3946,12 @@ export async function getShapeEditorRecord(
     const sheet = context.workbook.worksheets.getItem(sheetName);
     const shape = sheet.shapes.getItem(shapeName);
     shape.load(
-      "name,left,top,zOrderPosition,width,height,rotation,lockAspectRatio,geometricShapeType,altTextDescription,altTextTitle,fill/foregroundColor,fill/transparency,lineFormat/color,lineFormat/weight,textFrame/horizontalAlignment,textFrame/verticalAlignment,textFrame/textRange/text,textFrame/textRange/font/color,textFrame/textRange/font/size,textFrame/textRange/font/bold,textFrame/textRange/font/italic"
+      "name,left,top,zOrderPosition,width,height,rotation,lockAspectRatio,geometricShapeType,altTextDescription,fill/foregroundColor,fill/transparency,lineFormat/color,lineFormat/weight,textFrame/horizontalAlignment,textFrame/verticalAlignment,textFrame/textRange/text,textFrame/textRange/font/color,textFrame/textRange/font/size,textFrame/textRange/font/bold,textFrame/textRange/font/italic"
     );
     await context.sync();
 
     const fillColor = shape.fill.foregroundColor ? shape.fill.foregroundColor : NO_FILL_COLOR_TOKEN;
-    const anchorAddress = parseShapeBuilderMetadata(
-      asString(shape.altTextTitle),
-      asString(shape.altTextDescription)
-    ).anchorAddress;
+    const anchorAddress = extractShapeAnchorAddress(shape.altTextDescription);
 
     return {
       name: shape.name,
@@ -4222,7 +4106,6 @@ export async function moveShapeToSelection(
     const oldParsed = splitQualifiedAddress(oldAnchorAddress);
     const oldAnchor = sheet.getRange(oldParsed.address || oldAnchorAddress).getCell(0, 0);
 
-    shape.load("altTextDescription,altTextTitle");
     selected.load("left,top");
     selectedCell.load("address");
     oldAnchor.load("address");
@@ -4237,14 +4120,7 @@ export async function moveShapeToSelection(
       selectedCell.copyFrom(oldAnchor, Excel.RangeCopyType.all);
       oldAnchor.clear(Excel.ClearApplyTo.contents);
     }
-    const existingMetadata = parseShapeBuilderMetadata(
-      asString(shape.altTextTitle),
-      asString(shape.altTextDescription)
-    );
-    applyShapeBuilderMetadata(shape, {
-      ...existingMetadata,
-      anchorAddress: targetAddress,
-    });
+    shape.altTextDescription = `${SHAPE_ANCHOR_PREFIX}${targetAddress}`;
 
     await context.sync();
     return { anchorAddress: targetAddress };
@@ -4352,8 +4228,6 @@ export async function openFormulaEditorPopout(initialState?: {
   wizardArgs?: string;
   wizardReturnExpression?: string;
   wizardVariables?: Array<{ name: string; expression: string }>;
-  activeSubTab?: "metadata" | "lambda-test" | "editor" | "wizard" | "live-output";
-  lambdaTestInputs?: string[];
 }): Promise<void> {
   const url = `${window.location.origin}/taskpane.html?popout=formula`;
   if (formulaEditorDialog) {
@@ -4392,8 +4266,6 @@ export async function openFormulaEditorPopout(initialState?: {
                 wizardArgs: initialState.wizardArgs,
                 wizardReturnExpression: initialState.wizardReturnExpression,
                 wizardVariables: initialState.wizardVariables,
-                activeSubTab: initialState.activeSubTab,
-                lambdaTestInputs: initialState.lambdaTestInputs,
               }
             : null;
         const dispatchOpenMessage = () => {

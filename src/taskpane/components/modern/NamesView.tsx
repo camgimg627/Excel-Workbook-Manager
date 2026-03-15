@@ -1,6 +1,7 @@
 import * as React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Input, Select, Text, makeStyles } from "@fluentui/react-components";
+import { ArrowMove20Regular, Delete20Regular, Edit20Regular } from "@fluentui/react-icons";
 import {
   NamedRangeRecord,
   addNamedRange,
@@ -12,6 +13,16 @@ import {
   selectNamedRangeAddress,
   updateNamedRange,
 } from "../../taskpane";
+import { useDebounce } from "../../../hooks/useDebounce";
+import {
+  applyCase,
+  buildLambdaFormula,
+  buildNamedListFormula,
+  buildUniqueScopedName,
+  extractLambdaArgsFromFormula,
+  normalizeNameKey,
+  parseNamedListFormula,
+} from "../../../utils/names.utils";
 import { MODERN_TOKENS, useModernSharedStyles } from "./designTokens";
 
 type SortColumn = "name" | "address" | "sheet" | "scope" | "type";
@@ -28,7 +39,6 @@ interface NamesViewProps {
 }
 
 interface EditState {
-  open: boolean;
   record: NamedRangeRecord | null;
   editType: "Range" | "List" | "Formula";
   name: string;
@@ -39,7 +49,6 @@ interface EditState {
 }
 
 interface CreateState {
-  open: boolean;
   createType: CreateEntryType;
   scopeType: ScopeType;
   scope: string;
@@ -52,21 +61,18 @@ interface CreateState {
 }
 
 interface MoveState {
-  open: boolean;
   record: NamedRangeRecord | null;
   address: string;
   fallbackSheet: string;
 }
 
 interface DeleteState {
-  open: boolean;
   record: NamedRangeRecord | null;
   deleteName: boolean;
   deleteValues: boolean;
 }
 
 interface BulkState {
-  open: boolean;
   mode: "Prefix" | "Suffix" | "Replace" | "Delete";
   value: string;
   replaceWith: string;
@@ -74,6 +80,8 @@ interface BulkState {
   deleteName: boolean;
   deleteValues: boolean;
 }
+
+type ActiveModal = "none" | "create" | "edit" | "move" | "delete" | "bulk";
 
 const isInternalWorkbookSheetName = (sheetName: string): boolean => {
   const normalized = sheetName.trim();
@@ -91,7 +99,6 @@ const isInternalWorkbookSheetName = (sheetName: string): boolean => {
 };
 
 const buildDefaultCreateState = (): CreateState => ({
-  open: false,
   createType: "Range",
   scopeType: "Workbook",
   scope: "",
@@ -153,7 +160,6 @@ const useStyles = makeStyles({
     selectors: {
       "&:nth-child(even)": { backgroundColor: "#FCFCFD" },
       "&:hover": { backgroundColor: "#F3F8F4" },
-      "&:hover .row-actions": { opacity: 1, pointerEvents: "auto" },
     },
   },
   cell: {
@@ -164,9 +170,9 @@ const useStyles = makeStyles({
   rowActions: {
     display: "flex",
     gap: "4px",
-    opacity: 0,
-    pointerEvents: "none",
-    transition: "opacity 150ms ease",
+    opacity: 1,
+    pointerEvents: "auto",
+    flexWrap: "wrap",
   },
   linkBtn: {
     border: "none",
@@ -302,186 +308,16 @@ const useStyles = makeStyles({
   },
 });
 
-const applyCase = (value: string, mode: CaseTransform): string => {
-  if (mode === "none") return value;
-  const tokens = value
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .split(/[^A-Za-z0-9]+/)
-    .filter(Boolean);
-  if (tokens.length === 0) return value;
-  if (mode === "camelCase") {
-    return tokens
-      .map((part, idx) =>
-        idx === 0
-          ? `${part.charAt(0).toLowerCase()}${part.slice(1).toLowerCase()}`
-          : `${part.charAt(0).toUpperCase()}${part.slice(1).toLowerCase()}`
-      )
-      .join("");
-  }
-  if (mode === "snake_case") return tokens.map((t) => t.toLowerCase()).join("_");
-  return tokens.map((t) => t.toUpperCase()).join("_");
-};
-
-const normalizeNameKey = (value: string) => value.trim().toUpperCase();
-
 const buildScopeKey = (row: Pick<NamedRangeRecord, "scopeType" | "scope">) =>
   row.scopeType === "Workbook" ? "Workbook" : `Worksheet::${row.scope.toUpperCase()}`;
 
-const buildUniqueScopedName = (
-  baseName: string,
-  occupied: Set<string>,
-  fallbackName: string
-): string => {
-  const trimmedBase = baseName.trim() || fallbackName;
-  let candidate = trimmedBase;
-  let suffix = 2;
-  while (occupied.has(normalizeNameKey(candidate))) {
-    candidate = `${trimmedBase}_${suffix.toString()}`;
-    suffix += 1;
-  }
-  return candidate;
-};
-
 const err = (error: unknown): string => (error instanceof Error ? error.message : String(error));
-const IDENTIFIER_PATTERN = /^[A-Za-z_\\][A-Za-z0-9_.\\]*$/;
 
 const parseFunctionArgs = (value: string): string[] =>
   value
     .split(",")
     .map((item) => item.trim())
     .filter((item) => item.length > 0);
-
-const extractLambdaArgsFromFormula = (formulaInput: string): string[] => {
-  const normalized = formulaInput.trim().replace(/^=/, "").trim();
-  if (!/^LAMBDA\s*\(/i.test(normalized)) {
-    return [];
-  }
-  const start = normalized.indexOf("(");
-  const end = normalized.lastIndexOf(")");
-  if (start < 0 || end <= start + 1) {
-    return [];
-  }
-  const inner = normalized.slice(start + 1, end);
-  const parts: string[] = [];
-  let depth = 0;
-  let inString = false;
-  let current = "";
-  for (let index = 0; index < inner.length; index += 1) {
-    const ch = inner[index];
-    if (ch === '"') {
-      inString = !inString;
-      current += ch;
-      continue;
-    }
-    if (!inString) {
-      if (ch === "(") {
-        depth += 1;
-      } else if (ch === ")") {
-        depth = Math.max(0, depth - 1);
-      } else if (ch === "," && depth === 0) {
-        parts.push(current.trim());
-        current = "";
-        continue;
-      }
-    }
-    current += ch;
-  }
-  if (current.trim()) {
-    parts.push(current.trim());
-  }
-  if (parts.length <= 1) {
-    return [];
-  }
-  return parts.slice(0, -1).filter((item) => IDENTIFIER_PATTERN.test(item));
-};
-
-const parseNamedListFormula = (formulaInput: string): string[] => {
-  const normalized = formulaInput.trim().replace(/^=/, "").trim();
-  if (!normalized.startsWith("{") || !normalized.endsWith("}")) {
-    return [];
-  }
-  const body = normalized.slice(1, -1);
-  const values: string[] = [];
-  let current = "";
-  let inString = false;
-  for (let index = 0; index < body.length; index += 1) {
-    const ch = body[index];
-    if (ch === '"') {
-      if (inString && body[index + 1] === '"') {
-        current += '"';
-        index += 1;
-        continue;
-      }
-      inString = !inString;
-      continue;
-    }
-    if (!inString && (ch === ";" || ch === ",")) {
-      const token = current.trim();
-      if (token) {
-        values.push(token);
-      }
-      current = "";
-      continue;
-    }
-    current += ch;
-  }
-  const finalToken = current.trim();
-  if (finalToken) {
-    values.push(finalToken);
-  }
-  return values;
-};
-
-const buildLambdaFormula = (bodyInput: string, argsInput: string): string => {
-  const normalizedBody = bodyInput.trim();
-  if (!normalizedBody) {
-    throw new Error("Function definition is required.");
-  }
-
-  const bodyWithoutEquals = normalizedBody.replace(/^=/, "").trim();
-  if (/^LAMBDA\s*\(/i.test(bodyWithoutEquals)) {
-    return `=${bodyWithoutEquals}`;
-  }
-
-  const args = parseFunctionArgs(argsInput);
-  const seen = new Set<string>();
-  args.forEach((arg) => {
-    if (!IDENTIFIER_PATTERN.test(arg)) {
-      throw new Error(`Invalid function argument "${arg}".`);
-    }
-    const key = arg.toUpperCase();
-    if (seen.has(key)) {
-      throw new Error(`Duplicate function argument "${arg}".`);
-    }
-    seen.add(key);
-  });
-
-  return args.length > 0
-    ? `=LAMBDA(${args.join(",")},${bodyWithoutEquals})`
-    : `=LAMBDA(${bodyWithoutEquals})`;
-};
-
-const buildNamedListFormula = (listInput: string): string => {
-  const values = listInput
-    .split(/[\r\n,;]+/)
-    .map((item) => item.trim())
-    .filter((item) => item.length > 0);
-  if (values.length === 0) {
-    throw new Error("List values are required.");
-  }
-
-  const literals = values.map((value) => {
-    if (/^-?\d+(\.\d+)?$/.test(value)) {
-      return value;
-    }
-    if (/^(TRUE|FALSE)$/i.test(value)) {
-      return value.toUpperCase();
-    }
-    return `"${value.replace(/"/g, '""')}"`;
-  });
-
-  return `={${literals.join(";")}}`;
-};
 
 const NamesView: React.FC<NamesViewProps> = ({
   createRequestId,
@@ -500,6 +336,7 @@ const NamesView: React.FC<NamesViewProps> = ({
   const [scopeFilter, setScopeFilter] = useState<"all" | ScopeType>("all");
   const [sortColumn, setSortColumn] = useState<SortColumn>("name");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+  const [activeModal, setActiveModal] = useState<ActiveModal>("none");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [typeFilters, setTypeFilters] = useState<Set<string>>(new Set());
   const [typeFilterOpen, setTypeFilterOpen] = useState<boolean>(false);
@@ -507,9 +344,9 @@ const NamesView: React.FC<NamesViewProps> = ({
   const [resizingAddressColumn, setResizingAddressColumn] = useState<boolean>(false);
   const addressResizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const typeFilterRef = useRef<HTMLDivElement | null>(null);
+  const anyModalOpenRef = useRef(false);
 
   const [editState, setEditState] = useState<EditState>({
-    open: false,
     record: null,
     editType: "Range",
     name: "",
@@ -522,19 +359,16 @@ const NamesView: React.FC<NamesViewProps> = ({
     ...buildDefaultCreateState(),
   });
   const [moveState, setMoveState] = useState<MoveState>({
-    open: false,
     record: null,
     address: "",
     fallbackSheet: "",
   });
   const [deleteState, setDeleteState] = useState<DeleteState>({
-    open: false,
     record: null,
     deleteName: true,
     deleteValues: false,
   });
   const [bulkState, setBulkState] = useState<BulkState>({
-    open: false,
     mode: "Prefix",
     value: "",
     replaceWith: "",
@@ -542,6 +376,9 @@ const NamesView: React.FC<NamesViewProps> = ({
     deleteName: true,
     deleteValues: false,
   });
+  const debouncedBulkValue = useDebounce(bulkState.value, 150);
+  const debouncedBulkReplaceWith = useDebounce(bulkState.replaceWith, 150);
+  anyModalOpenRef.current = activeModal !== "none";
 
   const openCreateDialog = async () => {
     let selectionSheet = "";
@@ -555,14 +392,15 @@ const NamesView: React.FC<NamesViewProps> = ({
     }
     setCreateState({
       ...buildDefaultCreateState(),
-      open: true,
       fallbackSheet: selectionSheet,
       scope: selectionSheet,
     });
+    setActiveModal("create");
   };
 
   const closeCreateDialog = () => {
     setCreateState(buildDefaultCreateState());
+    setActiveModal("none");
   };
 
   const load = useCallback(
@@ -592,13 +430,7 @@ const NamesView: React.FC<NamesViewProps> = ({
 
   useEffect(() => {
     const handleFocus = () => {
-      if (
-        createState.open ||
-        editState.open ||
-        moveState.open ||
-        deleteState.open ||
-        bulkState.open
-      ) {
+      if (anyModalOpenRef.current) {
         return;
       }
       void load(false);
@@ -607,14 +439,7 @@ const NamesView: React.FC<NamesViewProps> = ({
     return () => {
       window.removeEventListener("focus", handleFocus);
     };
-  }, [
-    bulkState.open,
-    createState.open,
-    deleteState.open,
-    editState.open,
-    load,
-    moveState.open,
-  ]);
+  }, [load]);
 
   useEffect(() => {
     if (createRequestId > 0) {
@@ -740,17 +565,24 @@ const NamesView: React.FC<NamesViewProps> = ({
         };
       }
       let requestedName = row.name;
-      if (bulkState.mode === "Prefix") requestedName = `${bulkState.value}${row.name}`;
-      if (bulkState.mode === "Suffix") requestedName = `${row.name}${bulkState.value}`;
+      if (bulkState.mode === "Prefix") requestedName = `${debouncedBulkValue}${row.name}`;
+      if (bulkState.mode === "Suffix") requestedName = `${row.name}${debouncedBulkValue}`;
       if (bulkState.mode === "Replace")
-        requestedName = row.name.replace(bulkState.value, bulkState.replaceWith);
+        requestedName = row.name.replace(debouncedBulkValue, debouncedBulkReplaceWith);
       requestedName = applyCase(requestedName, bulkState.caseTransform);
       const newName = buildUniqueScopedName(requestedName, occupied, row.name);
       occupied.add(normalizeNameKey(newName));
       occupiedByScope.set(scopeKey, occupied);
       return { id: row.id, oldName: row.name, requestedName, newName, row, scopeKey };
     });
-  }, [rows, selectedIds, bulkState]);
+  }, [
+    bulkState.caseTransform,
+    bulkState.mode,
+    debouncedBulkReplaceWith,
+    debouncedBulkValue,
+    rows,
+    selectedIds,
+  ]);
 
   const toggleSort = (column: SortColumn) => {
     if (sortColumn === column) {
@@ -919,6 +751,7 @@ const NamesView: React.FC<NamesViewProps> = ({
           ...prev,
           ...buildDefaultCreateState(),
         }));
+        setActiveModal("none");
       },
       `${createState.createType} name created.`,
       "Create failed"
@@ -954,7 +787,6 @@ const NamesView: React.FC<NamesViewProps> = ({
           referenceType
         );
         setEditState({
-          open: false,
           record: null,
           editType: "Range",
           name: "",
@@ -963,6 +795,7 @@ const NamesView: React.FC<NamesViewProps> = ({
           fallbackSheet: "",
           caseTransform: "none",
         });
+        setActiveModal("none");
       },
       "Named range updated.",
       "Update failed"
@@ -982,11 +815,11 @@ const NamesView: React.FC<NamesViewProps> = ({
           moveState.fallbackSheet
         );
         setMoveState({
-          open: false,
           record: null,
           address: "",
           fallbackSheet: "",
         });
+        setActiveModal("none");
       },
       "Named range moved.",
       "Move failed"
@@ -1011,11 +844,11 @@ const NamesView: React.FC<NamesViewProps> = ({
           deleteState.deleteValues
         );
         setDeleteState({
-          open: false,
           record: null,
           deleteName: true,
           deleteValues: false,
         });
+        setActiveModal("none");
       },
       "Delete operation completed.",
       "Delete failed"
@@ -1091,7 +924,7 @@ const NamesView: React.FC<NamesViewProps> = ({
             );
           }
         }
-        setBulkState((prev) => ({ ...prev, open: false }));
+        setActiveModal("none");
         setSelectedIds(new Set());
       },
       bulkState.mode === "Delete"
@@ -1133,9 +966,8 @@ const NamesView: React.FC<NamesViewProps> = ({
       }
       return;
     }
-    const normalizedFormula = row.address.trim().startsWith("=")
-      ? row.address.trim()
-      : `=${row.address.trim()}`;
+    const baseFormula = (row.formula || row.address).trim();
+    const normalizedFormula = baseFormula.startsWith("=") ? baseFormula : `=${baseFormula}`;
     try {
       const functionArgs =
         row.type === "Function"
@@ -1177,7 +1009,9 @@ const NamesView: React.FC<NamesViewProps> = ({
               + Create Name
             </Button>
             <Button
-              onClick={() => setBulkState((prev) => ({ ...prev, open: true }))}
+              onClick={() => {
+                setActiveModal("bulk");
+              }}
               disabled={selectedIds.size === 0}
             >
               Bulk Update ({selectedIds.size})
@@ -1200,7 +1034,7 @@ const NamesView: React.FC<NamesViewProps> = ({
               <button
                 type="button"
                 className={`${styles.typeFilterSummary} ${typeFilterOpen ? styles.typeFilterButtonOpen : ""}`}
-                aria-expanded={typeFilterOpen ? "true" : "false"}
+                aria-expanded={typeFilterOpen}
                 aria-controls="names-type-filter-menu"
                 onClick={() => setTypeFilterOpen((prev) => !prev)}
               >
@@ -1321,55 +1155,61 @@ const NamesView: React.FC<NamesViewProps> = ({
                 <td className={styles.cell}>
                   <div className={`${styles.rowActions} row-actions`}>
                     <Button
+                      appearance="subtle"
                       size="small"
+                      icon={<Edit20Regular />}
+                      aria-label={`Edit ${row.name}`}
+                      title={`Edit ${row.name}`}
                       disabled={row.kind !== "NamedRange"}
-                      onClick={() =>
+                      onClick={() => {
                         setEditState({
-                          open: true,
                           record: row,
                           editType:
                             row.type === "List" ? "List" : row.isRange ? "Range" : "Formula",
                           name: row.name,
-                          address: row.address,
+                          address: row.isRange ? row.address : row.formula || row.address,
                           listValues:
                             row.type === "List"
-                              ? parseNamedListFormula(row.address).join("\n")
+                              ? parseNamedListFormula(row.formula || row.address).join("\n")
                               : "",
                           fallbackSheet: row.sheet,
                           caseTransform: "none",
-                        })
-                      }
-                    >
-                      Edit
-                    </Button>
+                        });
+                        setActiveModal("edit");
+                      }}
+                    />
                     <Button
+                      appearance="subtle"
                       size="small"
+                      icon={<ArrowMove20Regular />}
+                      aria-label={`Move ${row.name}`}
+                      title={`Move ${row.name}`}
                       disabled={!row.isRange}
-                      onClick={() =>
+                      onClick={() => {
                         setMoveState({
-                          open: true,
                           record: row,
                           address: row.address,
                           fallbackSheet: row.sheet,
-                        })
-                      }
-                    >
-                      Move
-                    </Button>
+                        });
+                        setActiveModal("move");
+                      }}
+                    />
                     <Button
+                      appearance="subtle"
                       size="small"
+                      icon={<Delete20Regular />}
+                      aria-label={`Delete ${row.name}`}
+                      title={`Delete ${row.name}`}
                       disabled={row.kind !== "NamedRange"}
-                      onClick={() =>
+                      onClick={() => {
                         setDeleteState({
-                          open: true,
                           record: row,
                           deleteName: true,
                           deleteValues: false,
-                        })
-                      }
-                    >
-                      Delete
-                    </Button>
+                        });
+                        setActiveModal("delete");
+                      }}
+                    />
                   </div>
                 </td>
                 <td className={styles.cell}>
@@ -1421,7 +1261,7 @@ const NamesView: React.FC<NamesViewProps> = ({
       <Text className={shared.mutedText}>{`Showing ${visibleRows.length} of ${rows.length}`}</Text>
       {status ? <Text className={statusClass}>{status}</Text> : null}
 
-      {createState.open ? (
+      {activeModal === "create" ? (
         <div className={styles.modalBackdrop}>
           <div className={styles.modal}>
             <Text className={shared.cardTitle}>Create Name</Text>
@@ -1567,7 +1407,7 @@ const NamesView: React.FC<NamesViewProps> = ({
         </div>
       ) : null}
 
-      {editState.open && editState.record ? (
+      {activeModal === "edit" && editState.record ? (
         <div className={styles.modalBackdrop}>
           <div className={styles.modal}>
             <Text className={shared.cardTitle}>
@@ -1609,7 +1449,9 @@ const NamesView: React.FC<NamesViewProps> = ({
                 </div>
               ) : (
                 <div className={styles.full}>
-                  <Text className={shared.mutedText}>Address</Text>
+                  <Text className={shared.mutedText}>
+                    {editState.editType === "Formula" ? "Definition" : "Address"}
+                  </Text>
                   <Input
                     value={editState.address}
                     onChange={(_, data) => setEditState((p) => ({ ...p, address: data.value }))}
@@ -1618,7 +1460,7 @@ const NamesView: React.FC<NamesViewProps> = ({
               )}
             </div>
             <div className={styles.modalActions}>
-              {editState.editType !== "List" ? (
+              {editState.editType === "Range" ? (
                 <Button
                   onClick={() =>
                     void captureSelection((selection) =>
@@ -1634,9 +1476,8 @@ const NamesView: React.FC<NamesViewProps> = ({
                 </Button>
               ) : null}
               <Button
-                onClick={() =>
+                onClick={() => {
                   setEditState({
-                    open: false,
                     record: null,
                     editType: "Range",
                     name: "",
@@ -1644,8 +1485,9 @@ const NamesView: React.FC<NamesViewProps> = ({
                     listValues: "",
                     fallbackSheet: "",
                     caseTransform: "none",
-                  })
-                }
+                  });
+                  setActiveModal("none");
+                }}
               >
                 Cancel
               </Button>
@@ -1657,7 +1499,7 @@ const NamesView: React.FC<NamesViewProps> = ({
         </div>
       ) : null}
 
-      {moveState.open && moveState.record ? (
+      {activeModal === "move" && moveState.record ? (
         <div className={styles.modalBackdrop}>
           <div className={styles.modal}>
             <Text className={shared.cardTitle}>Move Named Range</Text>
@@ -1681,9 +1523,10 @@ const NamesView: React.FC<NamesViewProps> = ({
                 Use Selection
               </Button>
               <Button
-                onClick={() =>
-                  setMoveState({ open: false, record: null, address: "", fallbackSheet: "" })
-                }
+                onClick={() => {
+                  setMoveState({ record: null, address: "", fallbackSheet: "" });
+                  setActiveModal("none");
+                }}
               >
                 Cancel
               </Button>
@@ -1695,7 +1538,7 @@ const NamesView: React.FC<NamesViewProps> = ({
         </div>
       ) : null}
 
-      {deleteState.open && deleteState.record ? (
+      {activeModal === "delete" && deleteState.record ? (
         <div className={styles.modalBackdrop}>
           <div className={styles.modal}>
             <Text className={shared.cardTitle}>Delete Named Range</Text>
@@ -1721,14 +1564,14 @@ const NamesView: React.FC<NamesViewProps> = ({
             </label>
             <div className={styles.modalActions}>
               <Button
-                onClick={() =>
+                onClick={() => {
                   setDeleteState({
-                    open: false,
                     record: null,
                     deleteName: true,
                     deleteValues: false,
-                  })
-                }
+                  });
+                  setActiveModal("none");
+                }}
               >
                 Cancel
               </Button>
@@ -1744,7 +1587,7 @@ const NamesView: React.FC<NamesViewProps> = ({
         </div>
       ) : null}
 
-      {bulkState.open ? (
+      {activeModal === "bulk" ? (
         <div className={styles.modalBackdrop}>
           <div className={styles.modal}>
             <Text className={shared.cardTitle}>Bulk Update Named Ranges</Text>
@@ -1827,7 +1670,7 @@ const NamesView: React.FC<NamesViewProps> = ({
             </div>
             <Text className={shared.mutedText}>{`Preview rows: ${bulkPreview.length}`}</Text>
             <div className={styles.modalActions}>
-              <Button onClick={() => setBulkState((p) => ({ ...p, open: false }))}>Cancel</Button>
+              <Button onClick={() => setActiveModal("none")}>Cancel</Button>
               <Button
                 appearance="primary"
                 disabled={submitting || bulkPreview.length === 0}

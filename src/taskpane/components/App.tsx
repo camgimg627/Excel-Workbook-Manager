@@ -6,12 +6,12 @@ import ModernShell from "./modern/ModernShell";
 import FormulaMonacoView, { FormulaViewHandle } from "./modern/FormulaMonacoView";
 import FormatView from "./modern/FormatView";
 import { NAVIGATION_SIGNAL_KEY, NavigationTarget, isNavigationTarget } from "../navigation";
+import { isSandboxDebugEnabled } from "../../shared/featureFlags";
+import { OPEN_FORMULA_EDITOR_SIGNAL_KEY } from "../../shared/signals";
 
 /* global Office, OfficeRuntime */
 
 type UiMode = "legacy" | "modern";
-
-const OPEN_FORMULA_EDITOR_SIGNAL_KEY = "wbm.openFormulaEditor.request";
 const OPEN_FORMULA_EDITOR_ONLY_SIGNAL = "open-only";
 const OPEN_FORMULA_EDITOR_AND_PULL_SIGNAL = "open-and-pull";
 const FORMULA_PULL_SIGNAL = "formula-pull";
@@ -19,7 +19,7 @@ const FORMULA_APPLY_SIGNAL = "formula-apply";
 const FORMULA_BEAUTIFY_SIGNAL = "formula-beautify";
 const FORMULA_INSERT_SELECTION_SIGNAL = "formula-insert-selection";
 
-const UI_MODE_STORAGE_KEY = "wbm.ui.mode";
+const UI_MODE_SETTING_KEY = "wbm.ui.mode";
 
 const useStyles = makeStyles({
   root: {
@@ -46,11 +46,34 @@ const getInitialMode = (): UiMode => {
   if (fromQuery === "modern" || fromQuery === "legacy") {
     return fromQuery;
   }
-  if (typeof window === "undefined") {
+  if (typeof Office === "undefined") {
     return "modern";
   }
-  const fromStorage = window.localStorage.getItem(UI_MODE_STORAGE_KEY);
-  return fromStorage === "legacy" ? "legacy" : "modern";
+  try {
+    const stored = Office.context.roamingSettings?.get(UI_MODE_SETTING_KEY);
+    return stored === "legacy" ? "legacy" : "modern";
+  } catch {
+    return "modern";
+  }
+};
+
+const saveUiModePreference = async (mode: UiMode | null): Promise<void> => {
+  try {
+    const roamingSettings = Office.context.roamingSettings;
+    if (!roamingSettings) {
+      return;
+    }
+    if (mode) {
+      roamingSettings.set(UI_MODE_SETTING_KEY, mode);
+    } else {
+      roamingSettings.remove(UI_MODE_SETTING_KEY);
+    }
+    await new Promise<void>((resolve) => {
+      roamingSettings.saveAsync(() => resolve());
+    });
+  } catch {
+    // best-effort
+  }
 };
 
 const readDocumentSignal = (key: string): string | null => {
@@ -77,22 +100,19 @@ const App: React.FC = () => {
   const popoutMode = getQueryParam("popout");
   const isFormulaPopout = popoutMode === "formula";
   const isFormatPopout = popoutMode === "format";
+  const sandboxDebugEnabled = useMemo(() => isSandboxDebugEnabled(), []);
   const [uiMode, setUiMode] = useState<UiMode>(getInitialMode());
   const [activeTarget, setActiveTarget] = useState<NavigationTarget>("names");
   const [createRequestId, setCreateRequestId] = useState<number>(0);
   const formulaViewRef = useRef<FormulaViewHandle>(null);
 
   const resetUiPreference = () => {
-    if (typeof window !== "undefined") {
-      window.localStorage.removeItem(UI_MODE_STORAGE_KEY);
-    }
+    void saveUiModePreference(null);
     setUiMode("modern");
   };
 
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(UI_MODE_STORAGE_KEY, uiMode);
-    }
+    void saveUiModePreference(uiMode);
   }, [uiMode]);
 
   useEffect(() => {
@@ -222,8 +242,11 @@ const App: React.FC = () => {
     if (isFormatPopout) {
       return "format";
     }
+    if (activeTarget === "sandbox-debug" && !sandboxDebugEnabled) {
+      return "names";
+    }
     return activeTarget;
-  }, [activeTarget, isFormatPopout, isFormulaPopout]);
+  }, [activeTarget, isFormatPopout, isFormulaPopout, sandboxDebugEnabled]);
 
   if (isFormulaPopout && uiMode === "modern") {
     return (

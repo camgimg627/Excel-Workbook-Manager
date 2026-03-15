@@ -54,6 +54,7 @@ import {
   updateNamedRange,
 } from "../taskpane";
 import { NavigationTarget } from "../navigation";
+import { isSandboxDebugEnabled } from "../../shared/featureFlags";
 
 type StatusType = "success" | "error";
 type PrimaryTab = "Names" | "Format" | "Sandbox";
@@ -1136,7 +1137,8 @@ const useStyles = makeStyles({
 });
 
 const mapTargetToLegacy = (
-  target: NavigationTarget | undefined
+  target: NavigationTarget | undefined,
+  sandboxDebugEnabled: boolean
 ): { primaryTab: PrimaryTab; secondaryTabId: string } => {
   switch (target) {
     case "formulas":
@@ -1146,7 +1148,9 @@ const mapTargetToLegacy = (
     case "format":
       return { primaryTab: "Format", secondaryTabId: "styles" };
     case "sandbox-debug":
-      return { primaryTab: "Sandbox", secondaryTabId: "debug" };
+      return sandboxDebugEnabled
+        ? { primaryTab: "Sandbox", secondaryTabId: "debug" }
+        : { primaryTab: "Names", secondaryTabId: "ranges" };
     case "names":
     case "names-create":
     default:
@@ -1160,7 +1164,8 @@ const LegacyApp: React.FC<LegacyAppProps> = ({
   onExitBridge,
 }) => {
   const styles = useStyles();
-  const mappedTarget = mapTargetToLegacy(initialTarget);
+  const sandboxDebugEnabled = useMemo(() => isSandboxDebugEnabled(), []);
+  const mappedTarget = mapTargetToLegacy(initialTarget, sandboxDebugEnabled);
   const isFormulaPopout =
     typeof window !== "undefined" &&
     new URLSearchParams(window.location.search).get("popout") === "formula";
@@ -1304,7 +1309,10 @@ const LegacyApp: React.FC<LegacyAppProps> = ({
   const formulaLineNumbersRef = useRef<HTMLDivElement | null>(null);
   const shapeActivationHandlersRef = useRef<Array<{ remove: () => Promise<void> | void }>>([]);
 
-  const primaryTabs: PrimaryTab[] = useMemo(() => ["Names", "Format", "Sandbox"], []);
+  const primaryTabs: PrimaryTab[] = useMemo(
+    () => (sandboxDebugEnabled ? ["Names", "Format", "Sandbox"] : ["Names", "Format"]),
+    [sandboxDebugEnabled]
+  );
 
   const secondaryTabs = useMemo(() => {
     if (primaryTab === "Names") {
@@ -1313,8 +1321,8 @@ const LegacyApp: React.FC<LegacyAppProps> = ({
     if (primaryTab === "Format") {
       return FORMAT_TABS;
     }
-    return SANDBOX_TABS;
-  }, [primaryTab]);
+    return sandboxDebugEnabled ? SANDBOX_TABS : NAMES_TABS;
+  }, [primaryTab, sandboxDebugEnabled]);
 
   useEffect(() => {
     if (!isFormulaPopout) {
@@ -1328,10 +1336,18 @@ const LegacyApp: React.FC<LegacyAppProps> = ({
     if (isFormulaPopout) {
       return;
     }
-    const mapped = mapTargetToLegacy(initialTarget);
+    const mapped = mapTargetToLegacy(initialTarget, sandboxDebugEnabled);
     setPrimaryTab(mapped.primaryTab);
     setSecondaryTabId(mapped.secondaryTabId);
-  }, [initialTarget, isFormulaPopout]);
+  }, [initialTarget, isFormulaPopout, sandboxDebugEnabled]);
+
+  useEffect(() => {
+    if (sandboxDebugEnabled || primaryTab !== "Sandbox") {
+      return;
+    }
+    setPrimaryTab("Names");
+    setSecondaryTabId("ranges");
+  }, [primaryTab, sandboxDebugEnabled]);
 
   useEffect(() => {
     const currentExists = secondaryTabs.some((tab) => tab.id === secondaryTabId);
@@ -3063,7 +3079,7 @@ const LegacyApp: React.FC<LegacyAppProps> = ({
       open: true,
       record,
       name: record.name,
-      address: record.address,
+      address: record.isRange ? record.address : record.formula || record.address,
       fallbackSheet: record.sheet,
       caseTransform: "none",
     });
@@ -3277,7 +3293,8 @@ const LegacyApp: React.FC<LegacyAppProps> = ({
         editState.record.name,
         transformedName,
         editState.address.trim(),
-        editState.fallbackSheet
+        editState.fallbackSheet,
+        editState.record.isRange ? "Reference" : "Formula"
       );
       setEditState({
         open: false,
@@ -3300,6 +3317,11 @@ const LegacyApp: React.FC<LegacyAppProps> = ({
   };
 
   const useGridSelection = async () => {
+    if (!editState.record || !editState.record.isRange) {
+      setStatusType("error");
+      setStatus("Use Selection is only available for range-based names.");
+      return;
+    }
     try {
       const selection = await getCurrentSelectionAddress();
       setEditState((prev) => ({
@@ -5414,7 +5436,9 @@ const LegacyApp: React.FC<LegacyAppProps> = ({
               />
             </div>
             <div className={styles.modalRow}>
-              <Text className={styles.modalLabel}>Address</Text>
+              <Text className={styles.modalLabel}>
+                {editState.record?.isRange ? "Address" : "Definition"}
+              </Text>
               <Input
                 value={editState.address}
                 onChange={(_, data) => setEditState((prev) => ({ ...prev, address: data.value }))}
@@ -5439,7 +5463,9 @@ const LegacyApp: React.FC<LegacyAppProps> = ({
               </Select>
             </div>
             <div className={styles.modalActions}>
-              <Button onClick={() => void useGridSelection()}>Use Selection</Button>
+              {editState.record?.isRange ? (
+                <Button onClick={() => void useGridSelection()}>Use Selection</Button>
+              ) : null}
               <Button
                 icon={<Dismiss20Regular />}
                 onClick={() =>

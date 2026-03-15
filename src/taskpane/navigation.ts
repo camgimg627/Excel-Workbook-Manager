@@ -1,4 +1,6 @@
-export const NAVIGATION_SIGNAL_KEY = "wbm.navigation.request";
+import { NAVIGATION_SIGNAL_KEY } from "../shared/signals";
+
+export { NAVIGATION_SIGNAL_KEY };
 
 export type NavigationTarget =
   | "names"

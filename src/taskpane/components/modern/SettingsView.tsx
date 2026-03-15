@@ -1,5 +1,6 @@
 import * as React from "react";
 import { Button, Text, makeStyles } from "@fluentui/react-components";
+import { Signals } from "../../../shared/signals";
 import { useModernSharedStyles } from "./designTokens";
 
 interface SettingsViewProps {
@@ -67,10 +68,14 @@ const SettingsView: React.FC<SettingsViewProps> = ({ onOpenLegacy, onResetUiPref
         </Text>
         <ul className={styles.list}>
           <li>
-            <Text className={shared.mutedText}><code>wbm.navigation.request</code> routes target section.</Text>
+            <Text className={shared.mutedText}>
+              <code>{Signals.NAVIGATION_REQUEST}</code> routes target section.
+            </Text>
           </li>
           <li>
-            <Text className={shared.mutedText}><code>wbm.openFormulaEditor.request</code> routes formula actions.</Text>
+            <Text className={shared.mutedText}>
+              <code>{Signals.FORMULA_EDITOR_REQUEST}</code> routes formula actions.
+            </Text>
           </li>
         </ul>
       </div>

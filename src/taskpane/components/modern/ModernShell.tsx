@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button, Text, makeStyles } from "@fluentui/react-components";
 import {
   BookNumber20Regular,
@@ -26,7 +26,7 @@ import ModelBuilderView from "./ModelBuilderView";
 import SettingsView from "./SettingsView";
 import HelpView from "./HelpView";
 import { MODERN_TOKENS } from "./designTokens";
-import { FormulaEvaluationResult, evaluateFormula } from "../../taskpane";
+import { isSandboxDebugEnabled } from "../../../shared/featureFlags";
 
 interface ModernShellProps {
   activeTarget: NavigationTarget;
@@ -80,7 +80,6 @@ const SECTION_TARGET_MAP: Record<WorkspaceId, Record<string, NavigationTarget>> 
   },
   formulas: {
     formulaEditor: "formulas",
-    evaluateTest: "formulas",
   },
   data: {
     queryStatus: "queries",
@@ -101,7 +100,7 @@ const SECTION_TARGET_MAP: Record<WorkspaceId, Record<string, NavigationTarget>> 
 
 const DEFAULT_EXPANDED_BY_WORKSPACE: Record<WorkspaceId, string[]> = {
   structure: ["namedRanges"],
-  formulas: ["formulaEditor", "evaluateTest"],
+  formulas: ["formulaEditor"],
   data: ["queryStatus"],
   model: ["parameterBuilder"],
   layout: ["gridFreeze"],
@@ -239,6 +238,8 @@ const useStyles = makeStyles({
     display: "grid",
     gap: "10px",
     minHeight: "100%",
+    gridAutoRows: "max-content",
+    alignContent: "start",
   },
   workspaceHeader: {
     borderRadius: "10px",
@@ -452,6 +453,81 @@ const navItems: WorkspaceNavItem[] = [
   { id: "tools", label: "Tools", icon: <Settings20Regular /> },
 ];
 
+const MULTI_SECTION_WORKSPACES: ReadonlySet<WorkspaceId> = new Set<WorkspaceId>(["formulas"]);
+
+const getExpandedSectionsForOpen = (
+  workspace: WorkspaceId,
+  current: string[],
+  sectionId: string
+): string[] =>
+  MULTI_SECTION_WORKSPACES.has(workspace) ? [...current, sectionId].slice(-2) : [sectionId];
+
+interface SectionCardProps {
+  classNames: ReturnType<typeof useStyles>;
+  workspace: WorkspaceId;
+  sectionId: string;
+  title: string;
+  icon: React.ReactNode;
+  content: React.ReactNode;
+  expanded: boolean;
+  count?: string;
+  statusChip?: string;
+  onSectionHeaderClick: (workspace: WorkspaceId, sectionId: string, expanded: boolean) => void;
+}
+
+const SectionCard = React.memo<SectionCardProps>(
+  ({
+    classNames,
+    workspace,
+    sectionId,
+    title,
+    icon,
+    content,
+    expanded,
+    count,
+    statusChip,
+    onSectionHeaderClick,
+  }) => {
+    const triggerId = `${workspace}-${sectionId}-trigger`;
+    const panelId = `${workspace}-${sectionId}-panel`;
+
+    return (
+      <div className={classNames.sectionCard}>
+        <button
+          id={triggerId}
+          type="button"
+          className={classNames.sectionHeaderButton}
+          onClick={() => onSectionHeaderClick(workspace, sectionId, expanded)}
+          aria-expanded={expanded}
+          aria-controls={panelId}
+        >
+          <span className={classNames.sectionHeaderMain}>
+            <span className={classNames.navIcon}>{icon}</span>
+            <span className={classNames.sectionHeaderTitle}>{title}</span>
+          </span>
+          <span className={classNames.sectionHeaderMeta}>
+            {count ? <span className={classNames.sectionCount}>{count}</span> : null}
+            {statusChip ? <span className={classNames.sectionChip}>{statusChip}</span> : null}
+            {expanded ? <ChevronDown20Regular /> : <ChevronRight20Regular />}
+          </span>
+        </button>
+        {expanded ? (
+          <div
+            id={panelId}
+            className={classNames.sectionBody}
+            role="region"
+            aria-labelledby={triggerId}
+          >
+            {content}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+);
+
+SectionCard.displayName = "SectionCard";
+
 const ModernShell: React.FC<ModernShellProps> = ({
   activeTarget,
   createRequestId,
@@ -461,40 +537,107 @@ const ModernShell: React.FC<ModernShellProps> = ({
   formulaViewRef,
 }) => {
   const styles = useStyles();
-  const activeRoute = TARGET_ROUTE_MAP[activeTarget];
+  const sandboxDebugEnabled = useMemo(() => isSandboxDebugEnabled(), []);
+  const resolvedTarget =
+    activeTarget === "sandbox-debug" && !sandboxDebugEnabled ? "settings" : activeTarget;
+  const activeRoute = TARGET_ROUTE_MAP[resolvedTarget];
   const activeWorkspace = activeRoute.workspace;
   const [expandedSections, setExpandedSections] = useState<Record<WorkspaceId, string[]>>(
     DEFAULT_EXPANDED_BY_WORKSPACE
   );
-  const [editorFormulaText, setEditorFormulaText] = useState<string>("");
-  const [testFormulaOutput, setTestFormulaOutput] = useState<FormulaEvaluationResult | null>(null);
-  const [testBusy, setTestBusy] = useState<boolean>(false);
-  const [testStatus, setTestStatus] = useState<string>("");
-  const [testStatusType, setTestStatusType] = useState<"success" | "error">("success");
-  const [lastEvaluatedFormula, setLastEvaluatedFormula] = useState<string>("");
   const [formatSelectionRequest, setFormatSelectionRequest] = useState<{
     requestId: number;
     sheetName: string;
     shapeName: string;
   } | null>(null);
 
-  const normalizeError = (error: unknown): string =>
-    error instanceof Error ? error.message : String(error);
-
-  const openLegacy = () => {
+  const openLegacy = useCallback(() => {
     onSwitchToLegacy();
-  };
+  }, [onSwitchToLegacy]);
 
-  const openShapeEditor = (request: { sheetName: string; shapeName: string }) => {
-    setFormatSelectionRequest((prev) => ({
-      requestId: (prev?.requestId ?? 0) + 1,
-      ...request,
-    }));
-    onTargetChange("format");
-  };
+  const openShapeEditor = useCallback(
+    (request: { sheetName: string; shapeName: string }) => {
+      setFormatSelectionRequest((prev) => ({
+        requestId: (prev?.requestId ?? 0) + 1,
+        ...request,
+      }));
+      onTargetChange("format");
+    },
+    [onTargetChange]
+  );
+
+  const openWorkspace = useCallback(
+    (workspace: WorkspaceId) => {
+      onTargetChange(DEFAULT_TARGET_BY_WORKSPACE[workspace]);
+      setExpandedSections((prev) => {
+        if (prev[workspace].length > 0) {
+          return prev;
+        }
+        return {
+          ...prev,
+          [workspace]: [...DEFAULT_EXPANDED_BY_WORKSPACE[workspace]],
+        };
+      });
+    },
+    [onTargetChange]
+  );
+
+  const openSection = useCallback(
+    (workspace: WorkspaceId, sectionId: string) => {
+      const nextTarget =
+        SECTION_TARGET_MAP[workspace][sectionId] ?? DEFAULT_TARGET_BY_WORKSPACE[workspace];
+      onTargetChange(nextTarget);
+      setExpandedSections((prev) => {
+        const current = prev[workspace];
+        if (current.includes(sectionId)) {
+          return prev;
+        }
+        return {
+          ...prev,
+          [workspace]: getExpandedSectionsForOpen(workspace, current, sectionId),
+        };
+      });
+    },
+    [onTargetChange]
+  );
+
+  const toggleSection = useCallback((workspace: WorkspaceId, sectionId: string) => {
+    setExpandedSections((prev) => {
+      const current = prev[workspace];
+      const isOpen = current.includes(sectionId);
+      const nextSections = MULTI_SECTION_WORKSPACES.has(workspace)
+        ? isOpen
+          ? current.filter((id) => id !== sectionId)
+          : [...current, sectionId].slice(-2)
+        : isOpen
+          ? []
+          : [sectionId];
+      return {
+        ...prev,
+        [workspace]: nextSections,
+      };
+    });
+  }, []);
+
+  const onSectionHeaderClick = useCallback(
+    (workspace: WorkspaceId, sectionId: string, expanded: boolean) => {
+      if (expanded) {
+        toggleSection(workspace, sectionId);
+        return;
+      }
+      openSection(workspace, sectionId);
+    },
+    [openSection, toggleSection]
+  );
+
+  const isSectionExpanded = useCallback(
+    (workspace: WorkspaceId, sectionId: string): boolean =>
+      expandedSections[workspace].includes(sectionId),
+    [expandedSections]
+  );
 
   useEffect(() => {
-    const route = TARGET_ROUTE_MAP[activeTarget];
+    const route = TARGET_ROUTE_MAP[resolvedTarget];
     if (!route) {
       return;
     }
@@ -503,188 +646,14 @@ const ModernShell: React.FC<ModernShellProps> = ({
       if (current.includes(route.sectionId)) {
         return prev;
       }
-      const nextSections =
-        route.workspace === "formulas"
-          ? [...current, route.sectionId].slice(-2)
-          : [route.sectionId];
       return {
         ...prev,
-        [route.workspace]: nextSections,
+        [route.workspace]: getExpandedSectionsForOpen(route.workspace, current, route.sectionId),
       };
     });
-  }, [activeTarget]);
-
-  const openWorkspace = (workspace: WorkspaceId) => {
-    onTargetChange(DEFAULT_TARGET_BY_WORKSPACE[workspace]);
-    setExpandedSections((prev) => {
-      if (prev[workspace].length > 0) {
-        return prev;
-      }
-      return {
-        ...prev,
-        [workspace]: [...DEFAULT_EXPANDED_BY_WORKSPACE[workspace]],
-      };
-    });
-  };
-
-  const openSection = (workspace: WorkspaceId, sectionId: string) => {
-    const nextTarget =
-      SECTION_TARGET_MAP[workspace][sectionId] ?? DEFAULT_TARGET_BY_WORKSPACE[workspace];
-    onTargetChange(nextTarget);
-    setExpandedSections((prev) => {
-      const current = prev[workspace];
-      if (current.includes(sectionId)) {
-        return prev;
-      }
-      const nextSections =
-        workspace === "formulas" ? [...current, sectionId].slice(-2) : [sectionId];
-      return {
-        ...prev,
-        [workspace]: nextSections,
-      };
-    });
-  };
-
-  const toggleSection = (workspace: WorkspaceId, sectionId: string) => {
-    setExpandedSections((prev) => {
-      const current = prev[workspace];
-      const isOpen = current.includes(sectionId);
-      let nextSections: string[];
-      if (workspace === "formulas") {
-        nextSections = isOpen
-          ? current.filter((id) => id !== sectionId)
-          : [...current, sectionId].slice(-2);
-      } else {
-        nextSections = isOpen ? [] : [sectionId];
-      }
-      return {
-        ...prev,
-        [workspace]: nextSections,
-      };
-    });
-  };
-
-  const runFormulaAction = (action: keyof FormulaViewHandle) => {
-    const view = formulaViewRef.current;
-    if (!view) {
-      return;
-    }
-    void view[action]();
-  };
-
-  const isSectionExpanded = (workspace: WorkspaceId, sectionId: string): boolean =>
-    expandedSections[workspace].includes(sectionId);
-
-  const renderSection = (
-    workspace: WorkspaceId,
-    sectionId: string,
-    title: string,
-    icon: React.ReactNode,
-    content: React.ReactNode,
-    options?: { count?: string; statusChip?: string }
-  ) => {
-    const expanded = isSectionExpanded(workspace, sectionId);
-    const triggerId = `${workspace}-${sectionId}-trigger`;
-    const panelId = `${workspace}-${sectionId}-panel`;
-    return (
-      <div className={styles.sectionCard} key={`${workspace}:${sectionId}`}>
-        <button
-          id={triggerId}
-          type="button"
-          className={styles.sectionHeaderButton}
-          onClick={() => {
-            if (!expanded) {
-              openSection(workspace, sectionId);
-            } else {
-              toggleSection(workspace, sectionId);
-            }
-          }}
-          aria-expanded={expanded ? "true" : "false"}
-          aria-controls={panelId}
-        >
-          <span className={styles.sectionHeaderMain}>
-            <span className={styles.navIcon}>{icon}</span>
-            <span className={styles.sectionHeaderTitle}>{title}</span>
-          </span>
-          <span className={styles.sectionHeaderMeta}>
-            {options?.count ? <span className={styles.sectionCount}>{options.count}</span> : null}
-            {options?.statusChip ? (
-              <span className={styles.sectionChip}>{options.statusChip}</span>
-            ) : null}
-            {expanded ? <ChevronDown20Regular /> : <ChevronRight20Regular />}
-          </span>
-        </button>
-        {expanded ? (
-          <div
-            id={panelId}
-            className={styles.sectionBody}
-            role="region"
-            aria-labelledby={triggerId}
-          >
-            {content}
-          </div>
-        ) : null}
-      </div>
-    );
-  };
+  }, [resolvedTarget]);
 
   const workspaceMeta = WORKSPACE_META[activeWorkspace];
-
-  const executeFormulaTest = async (formulaToRun: string, silent: boolean): Promise<void> => {
-    const normalized = formulaToRun.trim();
-    if (!normalized) {
-      setTestFormulaOutput(null);
-      setLastEvaluatedFormula("");
-      if (!silent) {
-        setTestStatusType("error");
-        setTestStatus("Enter a formula to test.");
-      }
-      return;
-    }
-    setLastEvaluatedFormula(normalized);
-    setTestBusy(true);
-    try {
-      const result = await evaluateFormula(normalized);
-      setTestFormulaOutput(result);
-      if (!silent) {
-        setTestStatusType("success");
-        setTestStatus(`Formula test completed (${result.address}).`);
-      }
-    } catch (error) {
-      setTestFormulaOutput(null);
-      setTestStatusType("error");
-      setTestStatus(`Formula test failed: ${normalizeError(error)}`);
-    } finally {
-      setTestBusy(false);
-    }
-  };
-
-  const runManualFormulaTest = async () => {
-    const candidate =
-      editorFormulaText.trim() || formulaViewRef.current?.getCurrentFormula?.().trim() || "";
-    if (!candidate) {
-      setTestStatusType("error");
-      setTestStatus("Formula editor is empty.");
-      return;
-    }
-    await executeFormulaTest(candidate, false);
-  };
-
-  useEffect(() => {
-    const normalized = editorFormulaText.trim();
-    if (!normalized) {
-      setTestFormulaOutput(null);
-      setLastEvaluatedFormula("");
-      setTestStatus("");
-      return;
-    }
-    if (lastEvaluatedFormula && normalized !== lastEvaluatedFormula) {
-      setTestFormulaOutput(null);
-      setLastEvaluatedFormula("");
-      setTestStatusType("success");
-      setTestStatus("Formula editor changed. Click Calculate to refresh output.");
-    }
-  }, [editorFormulaText, lastEvaluatedFormula]);
 
   const workspacePrimaryAction = useMemo(() => {
     if (activeWorkspace === "structure") {
@@ -735,7 +704,7 @@ const ModernShell: React.FC<ModernShellProps> = ({
       );
     }
     return null;
-  }, [activeWorkspace]);
+  }, [activeWorkspace, openSection]);
 
   const renderWorkspaceActionBar = () => {
     if (activeWorkspace === "structure") {
@@ -764,21 +733,8 @@ const ModernShell: React.FC<ModernShellProps> = ({
     if (activeWorkspace === "formulas") {
       return (
         <div className={styles.actionBar}>
-          <Button size="small" onClick={() => runFormulaAction("pull")}>
-            Pull Active Formula
-          </Button>
-          <Button size="small" onClick={() => runFormulaAction("apply")}>
-            Apply To Cell
-          </Button>
-          <Button size="small" onClick={() => runFormulaAction("beautify")}>
-            Beautify
-          </Button>
-          <Button size="small" onClick={() => runFormulaAction("insertSelection")}>
-            Use Current Selection
-          </Button>
           <Text className={styles.actionHint}>
-            The formula editor is the source of truth. Calculate output below uses the current
-            editor text automatically.
+            Pull, apply, beautify, and selection-insert are in the editor toolbar below.
           </Text>
         </div>
       );
@@ -865,26 +821,34 @@ const ModernShell: React.FC<ModernShellProps> = ({
     if (activeWorkspace === "structure") {
       return (
         <div className={styles.sectionStack}>
-          {renderSection(
-            "structure",
-            "namedRanges",
-            "Named Ranges",
-            <BookNumber20Regular />,
-            <NamesView
-              createRequestId={createRequestId}
-              onOpenLegacy={openLegacy}
-              onOpenShape={openShapeEditor}
-              embedded
-            />,
-            { statusChip: "Active" }
-          )}
-          {renderSection(
-            "structure",
-            "tables",
-            "Tables",
-            <Table20Regular />,
-            <TablesView onOpenLegacy={openLegacy} embedded />
-          )}
+          <SectionCard
+            classNames={styles}
+            workspace="structure"
+            sectionId="namedRanges"
+            title="Named Ranges"
+            icon={<BookNumber20Regular />}
+            content={
+              <NamesView
+                createRequestId={createRequestId}
+                onOpenLegacy={openLegacy}
+                onOpenShape={openShapeEditor}
+                embedded
+              />
+            }
+            expanded={isSectionExpanded("structure", "namedRanges")}
+            statusChip="Active"
+            onSectionHeaderClick={onSectionHeaderClick}
+          />
+          <SectionCard
+            classNames={styles}
+            workspace="structure"
+            sectionId="tables"
+            title="Tables"
+            icon={<Table20Regular />}
+            content={<TablesView onOpenLegacy={openLegacy} embedded />}
+            expanded={isSectionExpanded("structure", "tables")}
+            onSectionHeaderClick={onSectionHeaderClick}
+          />
         </div>
       );
     }
@@ -892,80 +856,24 @@ const ModernShell: React.FC<ModernShellProps> = ({
     if (activeWorkspace === "formulas") {
       return (
         <div className={styles.sectionStack}>
-          {renderSection(
-            "formulas",
-            "formulaEditor",
-            "Formula Editor",
-            <DataArea20Regular />,
-            <FormulaMonacoView
-              ref={formulaViewRef}
-              isPopout={false}
-              onOpenLegacy={openLegacy}
-              embedded
-              onFormulaChange={setEditorFormulaText}
-            />,
-            { statusChip: "Live" }
-          )}
-          {renderSection(
-            "formulas",
-            "evaluateTest",
-            "Calculate Output",
-            <DataPie20Regular />,
-            <div className={styles.evaluatePanel}>
-              <Text className={styles.placeholderText}>Editor Formula</Text>
-              <div className={styles.evaluateFormulaPreview}>
-                <pre className={styles.evaluateFormulaCode}>
-                  {editorFormulaText.trim() || "Formula editor is empty."}
-                </pre>
-              </div>
-              <div className={styles.evaluateRow}>
-                <Text className={styles.evaluateHint}>
-                  Calculate always uses the formula currently shown in Formula Editor.
-                </Text>
-                <Button
-                  size="small"
-                  appearance="primary"
-                  onClick={() => void runManualFormulaTest()}
-                  disabled={testBusy}
-                >
-                  Calculate
-                </Button>
-              </div>
-              <div className={styles.evaluateOutputWrap}>
-                {testFormulaOutput ? (
-                  <table className={styles.evaluateOutputTable}>
-                    <tbody>
-                      {testFormulaOutput.values.map((row, rowIndex) => (
-                        <tr key={rowIndex}>
-                          {row.map((cell, colIndex) => (
-                            <td
-                              key={`${rowIndex}-${colIndex}`}
-                              className={styles.evaluateOutputCell}
-                            >
-                              {cell === null ? "" : String(cell)}
-                            </td>
-                          ))}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                ) : (
-                  <div className={styles.evaluateOutputCell}>
-                    <Text className={styles.placeholderText}>
-                      Results will render here after running the test.
-                    </Text>
-                  </div>
-                )}
-              </div>
-              {testStatus ? (
-                <Text
-                  className={`${styles.evaluateStatus} ${testStatusType === "error" ? styles.evaluateStatusError : ""}`}
-                >
-                  {testStatus}
-                </Text>
-              ) : null}
-            </div>
-          )}
+          <SectionCard
+            classNames={styles}
+            workspace="formulas"
+            sectionId="formulaEditor"
+            title="Formula Editor"
+            icon={<DataArea20Regular />}
+            content={
+              <FormulaMonacoView
+                ref={formulaViewRef}
+                isPopout={false}
+                onOpenLegacy={openLegacy}
+                embedded
+              />
+            }
+            expanded={isSectionExpanded("formulas", "formulaEditor")}
+            statusChip="Live"
+            onSectionHeaderClick={onSectionHeaderClick}
+          />
         </div>
       );
     }
@@ -973,21 +881,27 @@ const ModernShell: React.FC<ModernShellProps> = ({
     if (activeWorkspace === "data") {
       return (
         <div className={styles.sectionStack}>
-          {renderSection(
-            "data",
-            "queryStatus",
-            "Query Status",
-            <DataPie20Regular />,
-            <QueriesView onOpenLegacy={openLegacy} embedded />,
-            { statusChip: "Live" }
-          )}
-          {renderSection(
-            "data",
-            "pivotRefresh",
-            "Pivot Refresh",
-            <Table20Regular />,
-            <PivotsView onOpenLegacy={openLegacy} embedded />
-          )}
+          <SectionCard
+            classNames={styles}
+            workspace="data"
+            sectionId="queryStatus"
+            title="Query Status"
+            icon={<DataPie20Regular />}
+            content={<QueriesView onOpenLegacy={openLegacy} embedded />}
+            expanded={isSectionExpanded("data", "queryStatus")}
+            statusChip="Live"
+            onSectionHeaderClick={onSectionHeaderClick}
+          />
+          <SectionCard
+            classNames={styles}
+            workspace="data"
+            sectionId="pivotRefresh"
+            title="Pivot Refresh"
+            icon={<Table20Regular />}
+            content={<PivotsView onOpenLegacy={openLegacy} embedded />}
+            expanded={isSectionExpanded("data", "pivotRefresh")}
+            onSectionHeaderClick={onSectionHeaderClick}
+          />
         </div>
       );
     }
@@ -995,14 +909,17 @@ const ModernShell: React.FC<ModernShellProps> = ({
     if (activeWorkspace === "model") {
       return (
         <div className={styles.sectionStack}>
-          {renderSection(
-            "model",
-            "parameterBuilder",
-            "Parameter Builder",
-            <TextAlignJustify20Regular />,
-            <ModelBuilderView onOpenLegacy={openLegacy} embedded />,
-            { statusChip: "Ready" }
-          )}
+          <SectionCard
+            classNames={styles}
+            workspace="model"
+            sectionId="parameterBuilder"
+            title="Parameter Builder"
+            icon={<TextAlignJustify20Regular />}
+            content={<ModelBuilderView onOpenLegacy={openLegacy} embedded />}
+            expanded={isSectionExpanded("model", "parameterBuilder")}
+            statusChip="Ready"
+            onSectionHeaderClick={onSectionHeaderClick}
+          />
         </div>
       );
     }
@@ -1010,50 +927,64 @@ const ModernShell: React.FC<ModernShellProps> = ({
     if (activeWorkspace === "layout") {
       return (
         <div className={styles.sectionStack}>
-          {renderSection(
-            "layout",
-            "gridFreeze",
-            "Gridlines and Freeze Panes",
-            <Grid20Regular />,
-            <FormatView
-              onOpenLegacy={openLegacy}
-              selectionRequest={formatSelectionRequest}
-              embedded
-            />,
-            { statusChip: "Active" }
-          )}
+          <SectionCard
+            classNames={styles}
+            workspace="layout"
+            sectionId="gridFreeze"
+            title="Gridlines and Freeze Panes"
+            icon={<Grid20Regular />}
+            content={
+              <FormatView onOpenLegacy={openLegacy} selectionRequest={formatSelectionRequest} embedded />
+            }
+            expanded={isSectionExpanded("layout", "gridFreeze")}
+            statusChip="Active"
+            onSectionHeaderClick={onSectionHeaderClick}
+          />
         </div>
       );
     }
 
     return (
       <div className={styles.sectionStack}>
-        {renderSection(
-          "tools",
-          "debugUtilities",
-          "Debug Utilities",
-          <Box20Regular />,
-          <SandboxDebugView onOpenLegacy={openLegacy} embedded />
-        )}
-        {renderSection(
-          "tools",
-          "settings",
-          "Settings",
-          <Settings20Regular />,
-          <SettingsView
-            onOpenLegacy={openLegacy}
-            onResetUiPreference={onResetUiPreference}
-            embedded
-          />,
-          { statusChip: "Active" }
-        )}
-        {renderSection(
-          "tools",
-          "help",
-          "Help",
-          <QuestionCircle20Regular />,
-          <HelpView onNavigate={onTargetChange} embedded />
-        )}
+        {sandboxDebugEnabled ? (
+          <SectionCard
+            classNames={styles}
+            workspace="tools"
+            sectionId="debugUtilities"
+            title="Debug Utilities"
+            icon={<Box20Regular />}
+            content={<SandboxDebugView onOpenLegacy={openLegacy} embedded />}
+            expanded={isSectionExpanded("tools", "debugUtilities")}
+            onSectionHeaderClick={onSectionHeaderClick}
+          />
+        ) : null}
+        <SectionCard
+          classNames={styles}
+          workspace="tools"
+          sectionId="settings"
+          title="Settings"
+          icon={<Settings20Regular />}
+          content={
+            <SettingsView
+              onOpenLegacy={openLegacy}
+              onResetUiPreference={onResetUiPreference}
+              embedded
+            />
+          }
+          expanded={isSectionExpanded("tools", "settings")}
+          statusChip="Active"
+          onSectionHeaderClick={onSectionHeaderClick}
+        />
+        <SectionCard
+          classNames={styles}
+          workspace="tools"
+          sectionId="help"
+          title="Help"
+          icon={<QuestionCircle20Regular />}
+          content={<HelpView onNavigate={onTargetChange} embedded />}
+          expanded={isSectionExpanded("tools", "help")}
+          onSectionHeaderClick={onSectionHeaderClick}
+        />
       </div>
     );
   };
