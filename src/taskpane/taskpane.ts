@@ -45,6 +45,27 @@ export interface CreateNamedRangesFromTableRequest {
   conflictValue: string;
 }
 
+export interface WatchItem {
+  id: string;
+  label: string;
+  sheet: string;
+  address: string;
+  addedAt: string;
+}
+
+export interface WatchItemResolved extends WatchItem {
+  currentValue: string;
+  formula: string;
+  hasFormula: boolean;
+  dependentCount: number;
+  dependentAddresses: string[];
+  precedentCount: number;
+  precedentAddresses: string[];
+  dependentsAvailable: boolean;
+  error: string | null;
+  lastRefreshed: Date;
+}
+
 export interface FormulaEvaluationResult {
   address: string;
   values: (string | number | boolean | null)[][];
@@ -3710,6 +3731,198 @@ export async function createNamedRangesFromTableColumns(
 
     await context.sync();
     return { created, skipped };
+  });
+}
+export async function getWatchWindowData(items: WatchItem[]): Promise<WatchItemResolved[]> {
+  if (items.length === 0) return [];
+
+  const hasDependentsApi = canUseExcelApi("1.14");
+
+  return Excel.run(async (context) => {
+    const now = new Date();
+    const results: WatchItemResolved[] = [];
+
+    interface ItemWork {
+      item: WatchItem;
+      range: Excel.Range | null;
+      rangeAreas: Excel.RangeAreas | null;
+      precRangeAreas: Excel.RangeAreas | null;
+      errorMessage: string | null;
+    }
+
+    const workItems: ItemWork[] = [];
+
+    // Phase 1 — build range handles
+    for (const item of items) {
+      let range: Excel.Range | null = null;
+      let errorMessage: string | null = null;
+
+      try {
+        const sheet = context.workbook.worksheets.getItem(item.sheet);
+        const looksLikeCellAddress = /^[A-Z]{1,3}\d+(:[A-Z]{1,3}\d+)?$/i.test(item.address.trim());
+
+        if (!looksLikeCellAddress) {
+          const namedItem = context.workbook.names.getItemOrNullObject(item.address.trim());
+          namedItem.load("isNullObject");
+          await context.sync();
+          if (!namedItem.isNullObject) {
+            range = namedItem.getRange();
+          }
+        }
+
+        if (!range) {
+          range = sheet.getRange(item.address);
+        }
+
+        range.load("values,formulas,address");
+      } catch (err) {
+        errorMessage = err instanceof Error ? err.message : String(err);
+      }
+
+      workItems.push({ item, range, rangeAreas: null, precRangeAreas: null, errorMessage });
+    }
+
+    try {
+      await context.sync();
+    } catch {
+      // individual errors captured below
+    }
+
+    // Phase 2 — load dependents/precedents (ExcelApi 1.14+ desktop only)
+    if (hasDependentsApi) {
+      for (const work of workItems) {
+        if (!work.range || work.errorMessage) continue;
+        try {
+          work.rangeAreas     = work.range.getDirectDependents();
+          work.precRangeAreas = work.range.getDirectPrecedents();
+          work.rangeAreas.load("areas/address");
+          work.precRangeAreas.load("areas/address");
+        } catch {
+          work.rangeAreas     = null;
+          work.precRangeAreas = null;
+        }
+      }
+      try {
+        await context.sync();
+      } catch {
+        for (const work of workItems) {
+          work.rangeAreas     = null;
+          work.precRangeAreas = null;
+        }
+      }
+    }
+
+    // Phase 3 — build resolved results
+    for (const work of workItems) {
+      const { item } = work;
+
+      if (work.errorMessage || !work.range) {
+        results.push({
+          ...item,
+          currentValue: "#ERROR",
+          formula: "",
+          hasFormula: false,
+          dependentCount: 0,
+          dependentAddresses: [],
+          precedentCount: 0,
+          precedentAddresses: [],
+          dependentsAvailable: hasDependentsApi,
+          error: work.errorMessage ?? "Address could not be resolved.",
+          lastRefreshed: now,
+        });
+        continue;
+      }
+
+      // Value
+      let currentValue = "";
+      try {
+        const vals = work.range.values as (string | number | boolean | null)[][];
+        const first = vals?.[0]?.[0];
+        const rowCount = vals?.length ?? 1;
+        const colCount = vals?.[0]?.length ?? 1;
+        const totalCells = rowCount * colCount;
+        if (totalCells === 1) {
+          currentValue = first === null ? "" : String(first);
+        } else {
+          currentValue = first === null
+            ? `[${rowCount}×${colCount}]`
+            : `${String(first)} [${rowCount}×${colCount}]`;
+        }
+      } catch {
+        currentValue = "—";
+      }
+
+      // Formula
+      let formula = "";
+      let hasFormula = false;
+      try {
+        const fmls = work.range.formulas as string[][];
+        const firstFml = fmls?.[0]?.[0] ?? "";
+        hasFormula = typeof firstFml === "string" && firstFml.startsWith("=");
+        formula = hasFormula ? firstFml : "";
+      } catch {
+        formula = "";
+      }
+
+      // Dependents
+      const dependentAddresses: string[] = [];
+      const precedentAddresses: string[] = [];
+
+      if (hasDependentsApi && work.rangeAreas) {
+        try {
+          for (const area of work.rangeAreas.areas.items) {
+            dependentAddresses.push(area.address);
+          }
+        } catch { /* non-fatal */ }
+      }
+
+      if (hasDependentsApi && work.precRangeAreas) {
+        try {
+          for (const area of work.precRangeAreas.areas.items) {
+            precedentAddresses.push(area.address);
+          }
+        } catch { /* non-fatal */ }
+      }
+
+      results.push({
+        ...item,
+        currentValue,
+        formula,
+        hasFormula,
+        dependentCount: dependentAddresses.length,
+        dependentAddresses,
+        precedentCount: precedentAddresses.length,
+        precedentAddresses,
+        dependentsAvailable: hasDependentsApi,
+        error: null,
+        lastRefreshed: now,
+      });
+    }
+
+    return results;
+  });
+}
+
+export async function selectCellAddress(address: string, sheetName: string): Promise<void> {
+  await Excel.run(async (context) => {
+    const sheet = context.workbook.worksheets.getItem(sheetName);
+    sheet.activate();
+
+    const looksLikeCellAddress = /^[A-Z]{1,3}\d+(:[A-Z]{1,3}\d+)?$/i.test(address.trim());
+
+    if (!looksLikeCellAddress) {
+      const namedItem = context.workbook.names.getItemOrNullObject(address.trim());
+      namedItem.load("isNullObject");
+      await context.sync();
+      if (!namedItem.isNullObject) {
+        namedItem.getRange().select();
+        await context.sync();
+        return;
+      }
+    }
+
+    sheet.getRange(address).select();
+    await context.sync();
   });
 }
 

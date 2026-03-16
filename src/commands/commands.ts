@@ -7,6 +7,8 @@ const FORMULA_PULL_SIGNAL = "formula-pull";
 const FORMULA_APPLY_SIGNAL = "formula-apply";
 const FORMULA_BEAUTIFY_SIGNAL = "formula-beautify";
 const FORMULA_INSERT_SELECTION_SIGNAL = "formula-insert-selection";
+export const WATCH_ADD_SIGNAL_KEY = "wbm.watch.addAddress";
+export const WATCH_ADD_SHEET_KEY  = "wbm.watch.addSheet";
 
 async function setSignal(key: string, value: string): Promise<void> {
   if (typeof OfficeRuntime !== "undefined" && OfficeRuntime.storage) {
@@ -110,6 +112,32 @@ async function insertSelectionFormulaCommand(event: Office.AddinCommands.Event) 
   await executeFormulaSignalCommand(event, FORMULA_INSERT_SELECTION_SIGNAL);
 }
 
+async function addToWatchWindowCommand(event: Office.AddinCommands.Event): Promise<void> {
+  try {
+    await Excel.run(async (context) => {
+      const selectedRange = context.workbook.getSelectedRange();
+      selectedRange.load("address");
+      const sheet = selectedRange.worksheet;
+      sheet.load("name");
+      await context.sync();
+
+      const rawAddress = selectedRange.address as string;
+      const bareAddress = rawAddress.includes("!")
+        ? rawAddress.split("!").slice(1).join("!")
+        : rawAddress;
+
+      await setSignal(WATCH_ADD_SIGNAL_KEY, bareAddress);
+      await setSignal(WATCH_ADD_SHEET_KEY, sheet.name as string);
+      await setSignal(NAVIGATION_SIGNAL_KEY, "watch");
+      await showTaskpane();
+    });
+  } catch {
+    // Best-effort.
+  } finally {
+    event.completed();
+  }
+}
+
 Office.actions.associate("openNamesCommand", openNamesCommand);
 Office.actions.associate("createNameCommand", createNameCommand);
 Office.actions.associate("openFormattingCommand", openFormattingCommand);
@@ -121,3 +149,4 @@ Office.actions.associate("pullFormulaCommand", pullFormulaCommand);
 Office.actions.associate("applyFormulaCommand", applyFormulaCommand);
 Office.actions.associate("beautifyFormulaCommand", beautifyFormulaCommand);
 Office.actions.associate("insertSelectionFormulaCommand", insertSelectionFormulaCommand);
+Office.actions.associate("addToWatchWindowCommand", addToWatchWindowCommand);

@@ -1,6 +1,4 @@
-import { NAVIGATION_SIGNAL_KEY } from "../shared/signals";
-
-export { NAVIGATION_SIGNAL_KEY };
+export const NAVIGATION_SIGNAL_KEY = "wbm.navigation.request";
 
 export type NavigationTarget =
   | "names"
@@ -12,6 +10,7 @@ export type NavigationTarget =
   | "pivots"
   | "format"
   | "sandbox-debug"
+  | "watch"
   | "settings"
   | "help";
 
@@ -25,6 +24,7 @@ export const NAVIGATION_TARGETS: ReadonlySet<NavigationTarget> = new Set<Navigat
   "pivots",
   "format",
   "sandbox-debug",
+  "watch",
   "settings",
   "help",
 ]);
