@@ -18,7 +18,6 @@ import {
   NamePreviewResult,
   buildColumnCreateSpecs,
   derivePreview,
-  isValidExcelName,
 } from "../../utils/nameTransforms";
 import {
   TABLE_CONTEXT_SIGNAL_KEY,

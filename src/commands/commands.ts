@@ -1,4 +1,4 @@
-/* global Office, OfficeRuntime */
+/* global Excel, Office, OfficeRuntime */
 import { NAVIGATION_SIGNAL_KEY, NavigationTarget } from "../taskpane/navigation";
 import { OPEN_FORMULA_EDITOR_SIGNAL_KEY } from "../shared/signals";
 const OPEN_FORMULA_EDITOR_ONLY_SIGNAL = "open-only";
@@ -9,6 +9,11 @@ const FORMULA_BEAUTIFY_SIGNAL = "formula-beautify";
 const FORMULA_INSERT_SELECTION_SIGNAL = "formula-insert-selection";
 export const WATCH_ADD_SIGNAL_KEY = "wbm.watch.addAddress";
 export const WATCH_ADD_SHEET_KEY  = "wbm.watch.addSheet";
+export const TABLE_CONTEXT_SIGNAL_KEY = "wbm.tables.context.action";
+export const TABLE_CONTEXT_TABLE_NAME_KEY = "wbm.tables.context.tableName";
+export const TABLE_CONTEXT_SHEET_NAME_KEY = "wbm.tables.context.sheetName";
+
+type TableContextAction = "editTableName" | "createNamedRanges";
 
 async function setSignal(key: string, value: string): Promise<void> {
   if (typeof OfficeRuntime !== "undefined" && OfficeRuntime.storage) {
@@ -112,6 +117,57 @@ async function insertSelectionFormulaCommand(event: Office.AddinCommands.Event) 
   await executeFormulaSignalCommand(event, FORMULA_INSERT_SELECTION_SIGNAL);
 }
 
+async function executeTableContextCommand(
+  event: Office.AddinCommands.Event,
+  action: TableContextAction
+): Promise<void> {
+  try {
+    await Excel.run(async (context) => {
+      const selectedCell = context.workbook.getSelectedRange().getCell(0, 0);
+      const sheet = selectedCell.worksheet;
+      const tables = sheet.tables;
+      sheet.load("name");
+      tables.load("items/name");
+      await context.sync();
+
+      const matches = tables.items.map((table) => {
+        const tableRange = table.getRange();
+        const intersection = tableRange.getIntersectionOrNullObject(selectedCell);
+        intersection.load("isNullObject");
+        return { table, intersection };
+      });
+      await context.sync();
+
+      const match = matches.find(({ intersection }) => !intersection.isNullObject);
+
+      await setSignal(NAVIGATION_SIGNAL_KEY, "tables");
+      if (!match) {
+        await showTaskpane();
+        return;
+      }
+
+      await setSignal(TABLE_CONTEXT_SIGNAL_KEY, action);
+      await setSignal(TABLE_CONTEXT_TABLE_NAME_KEY, match.table.name as string);
+      await setSignal(TABLE_CONTEXT_SHEET_NAME_KEY, sheet.name as string);
+      await showTaskpane();
+    });
+  } catch {
+    // Best-effort.
+  } finally {
+    event.completed();
+  }
+}
+
+async function editTableNameCommand(event: Office.AddinCommands.Event): Promise<void> {
+  await executeTableContextCommand(event, "editTableName");
+}
+
+async function createNamedRangesFromTableCommand(
+  event: Office.AddinCommands.Event
+): Promise<void> {
+  await executeTableContextCommand(event, "createNamedRanges");
+}
+
 async function addToWatchWindowCommand(event: Office.AddinCommands.Event): Promise<void> {
   try {
     await Excel.run(async (context) => {
@@ -149,4 +205,6 @@ Office.actions.associate("pullFormulaCommand", pullFormulaCommand);
 Office.actions.associate("applyFormulaCommand", applyFormulaCommand);
 Office.actions.associate("beautifyFormulaCommand", beautifyFormulaCommand);
 Office.actions.associate("insertSelectionFormulaCommand", insertSelectionFormulaCommand);
+Office.actions.associate("editTableNameCommand", editTableNameCommand);
+Office.actions.associate("createNamedRangesFromTableCommand", createNamedRangesFromTableCommand);
 Office.actions.associate("addToWatchWindowCommand", addToWatchWindowCommand);

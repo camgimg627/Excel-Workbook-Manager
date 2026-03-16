@@ -855,8 +855,10 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
     const [activeSubTab, setActiveSubTab] = useState<FormulaSubTab | null>("editor");
 
     const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
+    const editorHostRef = useRef<HTMLDivElement | null>(null);
     const monacoRef = useRef<typeof Monaco | null>(null);
     const providerRef = useRef<Monaco.IDisposable | null>(null);
+    const layoutFrameRef = useRef<number | null>(null);
     const namesRef = useRef<string[]>([]);
     const tablesRef = useRef<string[]>([]);
     const pendingEvalRequestsRef = useRef<
@@ -1130,6 +1132,19 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
         setStatus(`${label} failed: ${normalizeError(error)}`);
       }
     };
+
+    const scheduleEditorLayout = useCallback(() => {
+      if (typeof window === "undefined") {
+        return;
+      }
+      if (layoutFrameRef.current !== null) {
+        window.cancelAnimationFrame(layoutFrameRef.current);
+      }
+      layoutFrameRef.current = window.requestAnimationFrame(() => {
+        layoutFrameRef.current = null;
+        editorRef.current?.layout();
+      });
+    }, []);
 
     const commitNamedFunctionArgDraft = useCallback(() => {
       const draft = namedFunctionArgDraft.trim();
@@ -1727,11 +1742,12 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
     const onMount: OnMount = useCallback(
       (editor) => {
         editorRef.current = editor;
+        scheduleEditorLayout();
         editor.onDidChangeModelContent(() => {
           setFormulaText(editor.getValue());
         });
       },
-      []
+      [scheduleEditorLayout]
     );
 
     useEffect(() => {
@@ -1740,6 +1756,38 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
         providerRef.current?.dispose();
       };
     }, [registerCompletionProvider]);
+
+    useEffect(() => {
+      if (typeof window === "undefined") {
+        return undefined;
+      }
+
+      const host = editorHostRef.current;
+      const handleWindowResize = () => {
+        scheduleEditorLayout();
+      };
+
+      window.addEventListener("resize", handleWindowResize);
+
+      let observer: ResizeObserver | null = null;
+      if (host && typeof ResizeObserver !== "undefined") {
+        observer = new ResizeObserver(() => {
+          scheduleEditorLayout();
+        });
+        observer.observe(host);
+      }
+
+      scheduleEditorLayout();
+
+      return () => {
+        observer?.disconnect();
+        window.removeEventListener("resize", handleWindowResize);
+        if (layoutFrameRef.current !== null) {
+          window.cancelAnimationFrame(layoutFrameRef.current);
+          layoutFrameRef.current = null;
+        }
+      };
+    }, [scheduleEditorLayout]);
 
     useEffect(() => {
       setLambdaTestInputs((prev) => {
@@ -2321,6 +2369,7 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
 
                   <div className={styles.editorStage}>
                     <div
+                      ref={editorHostRef}
                       className={`${styles.editorWrap} ${styles.editorWrapResizable} ${
                         isPopout ? styles.editorWrapResizablePopout : ""
                       }`}
@@ -2350,7 +2399,6 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
                             lineHeight: editorLineHeight,
                             lineNumbers: "on",
                             wordWrap: "on",
-                            automaticLayout: true,
                             suggestOnTriggerCharacters: true,
                             quickSuggestions: { other: true, comments: false, strings: false },
                             wordBasedSuggestions: "off",

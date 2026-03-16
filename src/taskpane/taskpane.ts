@@ -45,6 +45,22 @@ export interface CreateNamedRangesFromTableRequest {
   conflictValue: string;
 }
 
+export interface CreateNamedRangesFromTableColumnRequestV2 {
+  sheetName: string;
+  tableName: string;
+  columns: Array<{
+    columnName: string;
+    finalName: string;
+  }>;
+  scopeType: "Workbook" | "Worksheet";
+}
+
+export interface WorkbookNameListRecord {
+  name: string;
+  scope: string;
+  scopeType: "Workbook" | "Worksheet";
+}
+
 export interface WatchItem {
   id: string;
   label: string;
@@ -3733,6 +3749,89 @@ export async function createNamedRangesFromTableColumns(
     return { created, skipped };
   });
 }
+
+export async function createNamedRangesFromTableColumnsV2(
+  request: CreateNamedRangesFromTableColumnRequestV2
+): Promise<{ created: string[]; skipped: string[] }> {
+  return Excel.run(async (context) => {
+    const table = context.workbook.worksheets
+      .getItem(request.sheetName)
+      .tables.getItem(request.tableName);
+
+    const workbookNames = context.workbook.names;
+    workbookNames.load("items/name");
+
+    const sheetNames = context.workbook.worksheets.getItem(request.sheetName).names;
+    sheetNames.load("items/name");
+    await context.sync();
+
+    const targetCollection = request.scopeType === "Workbook" ? workbookNames : sheetNames;
+    const taken = new Set(targetCollection.items.map((item) => item.name.toUpperCase()));
+    const created: string[] = [];
+    const skipped: string[] = [];
+
+    const columnRanges = request.columns.map((spec) => {
+      const column = table.columns.getItem(spec.columnName);
+      const dataBodyRange = column.getDataBodyRange();
+      dataBodyRange.load("address");
+      return { spec, dataBodyRange };
+    });
+    await context.sync();
+
+    for (const entry of columnRanges) {
+      const finalName = entry.spec.finalName.trim();
+      if (!finalName || taken.has(finalName.toUpperCase())) {
+        skipped.push(entry.spec.columnName);
+        continue;
+      }
+
+      targetCollection.add(finalName, `=${entry.dataBodyRange.address}`);
+      taken.add(finalName.toUpperCase());
+      created.push(finalName);
+    }
+
+    await context.sync();
+    return { created, skipped };
+  });
+}
+
+export async function listWorkbookNames(): Promise<WorkbookNameListRecord[]> {
+  return Excel.run(async (context) => {
+    const records: WorkbookNameListRecord[] = [];
+    const workbookNames = context.workbook.names;
+    workbookNames.load("items/name");
+
+    const worksheets = context.workbook.worksheets;
+    worksheets.load("items/name");
+    await context.sync();
+
+    workbookNames.items.forEach((item) => {
+      if (item.name.toLowerCase().startsWith("_xl")) {
+        return;
+      }
+      records.push({ name: item.name, scope: "Workbook", scopeType: "Workbook" });
+    });
+
+    const worksheetCollections = worksheets.items.map((sheet) => {
+      const names = sheet.names;
+      names.load("items/name");
+      return { sheetName: sheet.name, names };
+    });
+    await context.sync();
+
+    worksheetCollections.forEach(({ sheetName, names }) => {
+      names.items.forEach((item) => {
+        if (item.name.toLowerCase().startsWith("_xl")) {
+          return;
+        }
+        records.push({ name: item.name, scope: sheetName, scopeType: "Worksheet" });
+      });
+    });
+
+    return records;
+  });
+}
+
 export async function getWatchWindowData(items: WatchItem[]): Promise<WatchItemResolved[]> {
   if (items.length === 0) return [];
 
@@ -3745,8 +3844,8 @@ export async function getWatchWindowData(items: WatchItem[]): Promise<WatchItemR
     interface ItemWork {
       item: WatchItem;
       range: Excel.Range | null;
-      rangeAreas: Excel.RangeAreas | null;
-      precRangeAreas: Excel.RangeAreas | null;
+      rangeAreas: Excel.WorkbookRangeAreas | null;
+      precRangeAreas: Excel.WorkbookRangeAreas | null;
       errorMessage: string | null;
     }
 

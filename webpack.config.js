@@ -8,6 +8,19 @@ const webpack = require("webpack");
 const urlDev = "https://localhost:3000/";
 const urlProd = "https://www.contoso.com/"; // CHANGE THIS TO YOUR PRODUCTION DEPLOYMENT LOCATION
 
+function shouldDisplayRuntimeOverlay(error) {
+  const message =
+    typeof error === "string"
+      ? error
+      : typeof error?.message === "string"
+        ? error.message
+        : "";
+
+  return !/ResizeObserver loop (limit exceeded|completed with undelivered notifications)/i.test(
+    message
+  );
+}
+
 async function getHttpsOptions() {
   const httpsOptions = await devCerts.getHttpsServerOptions();
   return { ca: httpsOptions.ca, key: httpsOptions.key, cert: httpsOptions.cert };
@@ -100,6 +113,11 @@ module.exports = async (env, options) => {
     ],
     devServer: {
       hot: true,
+      client: {
+        overlay: {
+          runtimeErrors: shouldDisplayRuntimeOverlay,
+        },
+      },
       headers: {
         "Access-Control-Allow-Origin": "*",
       },
