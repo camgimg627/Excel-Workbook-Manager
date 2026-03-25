@@ -25,6 +25,25 @@ Excel add-ins are integrations built by third parties into Excel by using [Excel
 
     Once you are finished testing and debugging the add-in, select **Stop Previewing Your Office Add-in**. This closes the web server and removes the add-in from the registry and cache.
 
+### Run the add-in from npm
+
+1. Close every open Excel window first.
+
+   Office reuses the existing desktop Excel session during sideloading. If an already-open workbook still contains an older development add-in, Excel can show the "This add-in is no longer available" dialog instead of loading this project.
+
+1. Start the local test session.
+
+   Run `npm start`
+
+   The npm wrapper now:
+   - checks for an already-open Excel session and stops with a clear message if one is running,
+   - enables localhost loopback for the Office webview when needed,
+   - clears stale add-in debugging state before sideloading.
+
+1. Stop the session when you are done.
+
+   Run `npm run stop`
+
 ## Use the add-in project
 
 The add-in project that you've created contains sample code for a basic task pane add-in.

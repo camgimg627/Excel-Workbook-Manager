@@ -266,10 +266,9 @@
         <bt:String id="EditFml.Shortcut" DefaultValue="Ctrl+Shift+Alt+E"/>
         <bt:String id="PullFml.Shortcut" DefaultValue="Ctrl+Shift+Alt+P"/>
         <bt:String id="ApplyFml.Shortcut" DefaultValue="Ctrl+Shift+Alt+A"/>
-        <bt:String id="ContextMenu.EditTableName.Label" DefaultValue="Edit Table Name"/>
-        <bt:String id="ContextMenu.CreateNamedRanges.Label" DefaultValue="Create Named Ranges from Table"/>
-        <bt:String id="ContextMenu.AddToWatch.Label" DefaultValue="Add to Watch Window"/>
-        <bt:String id="BeautifyFormulaButton.Label" DefaultValue="Beautify"/>
+        <bt:String id="CtxEditTbl.Label" DefaultValue="Edit Table Name"/>
+        <bt:String id="CtxMakeNames.Label" DefaultValue="Create Named Ranges from Table"/>
+        <bt:String id="CtxWatch.Label" DefaultValue="Add to Watch Window"/>
       </bt:ShortStrings>
       <bt:LongStrings>
         <bt:String id="GetStarted.Description" DefaultValue="Your sample add-in loaded successfully. Go to the HOME tab and click the 'Show Task Pane' button to get started."/>
@@ -284,9 +283,9 @@
         <bt:String id="OpenFormattingButton.Tooltip" DefaultValue="Open Workbook Manager to formatting tools."/>
         <bt:String id="OpenSettingsButton.Tooltip" DefaultValue="Open Workbook Manager settings."/>
         <bt:String id="OpenHelpButton.Tooltip" DefaultValue="Open Workbook Manager help and guidance."/>
-        <bt:String id="ContextMenu.EditTableName.Tooltip" DefaultValue="Rename the table containing the selected cell."/>
-        <bt:String id="ContextMenu.CreateNamedRanges.Tooltip" DefaultValue="Create named ranges for selected columns in this table, with prefix, suffix, and case style options."/>
-        <bt:String id="ContextMenu.AddToWatch.Tooltip" DefaultValue="Track this cell's value, formula, and dependents in the Watch Window."/>
+        <bt:String id="CtxEditTbl.Tooltip" DefaultValue="Rename the table containing the selected cell."/>
+        <bt:String id="CtxMakeNames.Tooltip" DefaultValue="Create named ranges for selected columns in this table, with prefix, suffix, and case style options."/>
+        <bt:String id="CtxWatch.Tooltip" DefaultValue="Track this cell's value, formula, and dependents in the Watch Window."/>
       </bt:LongStrings>
     </Resources>
     <VersionOverrides xmlns="http://schemas.microsoft.com/office/taskpaneappversionoverrides/1.1" xsi:type="VersionOverridesV1_1">
@@ -529,10 +528,10 @@
             <ExtensionPoint xsi:type="ContextMenu">
               <OfficeMenu id="ContextMenuCell">
                 <Control xsi:type="Button" id="ContextMenu.EditTableName">
-                  <Label resid="ContextMenu.EditTableName.Label"/>
+                  <Label resid="CtxEditTbl.Label"/>
                   <Supertip>
-                    <Title resid="ContextMenu.EditTableName.Label"/>
-                    <Description resid="ContextMenu.EditTableName.Tooltip"/>
+                    <Title resid="CtxEditTbl.Label"/>
+                    <Description resid="CtxEditTbl.Tooltip"/>
                   </Supertip>
                   <Icon>
                     <bt:Image size="16" resid="Icon.16x16"/>
@@ -544,10 +543,10 @@
                   </Action>
                 </Control>
                 <Control xsi:type="Button" id="ContextMenu.CreateNamedRanges">
-                  <Label resid="ContextMenu.CreateNamedRanges.Label"/>
+                  <Label resid="CtxMakeNames.Label"/>
                   <Supertip>
-                    <Title resid="ContextMenu.CreateNamedRanges.Label"/>
-                    <Description resid="ContextMenu.CreateNamedRanges.Tooltip"/>
+                    <Title resid="CtxMakeNames.Label"/>
+                    <Description resid="CtxMakeNames.Tooltip"/>
                   </Supertip>
                   <Icon>
                     <bt:Image size="16" resid="Icon.16x16"/>
@@ -559,10 +558,10 @@
                   </Action>
                 </Control>
                 <Control xsi:type="Button" id="ContextMenu.AddToWatch">
-                  <Label resid="ContextMenu.AddToWatch.Label"/>
+                  <Label resid="CtxWatch.Label"/>
                   <Supertip>
-                    <Title resid="ContextMenu.AddToWatch.Label"/>
-                    <Description resid="ContextMenu.AddToWatch.Tooltip"/>
+                    <Title resid="CtxWatch.Label"/>
+                    <Description resid="CtxWatch.Tooltip"/>
                   </Supertip>
                   <Icon>
                     <bt:Image size="16" resid="Icon.16x16"/>
