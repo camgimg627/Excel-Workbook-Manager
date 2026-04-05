@@ -30,6 +30,9 @@ import {
 type SortColumn = "name" | "address" | "sheet" | "scope";
 type SortDirection = "asc" | "desc";
 type BulkCaseTransform = "none" | "camelCase" | "snake_case" | "SCREAMING_SNAKE_CASE";
+type BulkOperation = "Add" | "Remove" | "Replace";
+type BulkPosition = "Prefix" | "Suffix";
+type BulkDelimiter = "none" | "underscore" | "dot";
 
 interface TablesViewProps {
   onOpenLegacy: () => void;
@@ -37,10 +40,18 @@ interface TablesViewProps {
 
 interface BulkState {
   open: boolean;
-  mode: "Prefix" | "Suffix" | "Replace";
-  value: string;
+  operation: BulkOperation;
+  position: BulkPosition;
+  delimiter: BulkDelimiter;
+  textValue: string;
   replaceWith: string;
   caseTransform: BulkCaseTransform;
+}
+
+interface TableBulkPreviewRow {
+  row: TableRecord;
+  oldName: string;
+  newName: string;
 }
 
 /** State for the enhanced Create Named Ranges modal. */
@@ -85,6 +96,186 @@ const applyBulkCase = (value: string, mode: BulkCaseTransform): string => {
   return parts.map((p) => p.toUpperCase()).join("_");
 };
 
+const TABLE_COLUMNS: SortColumn[] = ["name", "address", "sheet", "scope"];
+
+const createEmptyTableFilters = (): Record<SortColumn, string> => ({
+  name: "",
+  address: "",
+  sheet: "",
+  scope: "",
+});
+
+const createDefaultBulkState = (): BulkState => ({
+  open: false,
+  operation: "Add",
+  position: "Prefix",
+  delimiter: "underscore",
+  textValue: "",
+  replaceWith: "",
+  caseTransform: "none",
+});
+
+const getDelimiterText = (delimiter: BulkDelimiter): string => {
+  switch (delimiter) {
+    case "underscore":
+      return "_";
+    case "dot":
+      return ".";
+    default:
+      return "";
+  }
+};
+
+const escapeRegex = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const replaceTextWithWildcardSupport = (input: string, findText: string, replaceWith: string): string => {
+  const normalizedFind = findText.trim();
+  if (!normalizedFind) {
+    return input;
+  }
+
+  if (normalizedFind === "*") {
+    return replaceWith;
+  }
+
+  const regexSource = normalizedFind.includes("*") || normalizedFind.includes("?")
+    ? escapeRegex(normalizedFind).replace(/\\\*/g, ".*").replace(/\\\?/g, ".")
+    : escapeRegex(normalizedFind);
+
+  return input.replace(new RegExp(regexSource, "gi"), replaceWith);
+};
+
+const applySingleBulkOperation = (
+  input: string,
+  operation: BulkOperation,
+  position: BulkPosition,
+  delimiter: BulkDelimiter,
+  textValue: string,
+  replaceWith: string
+): string => {
+  const normalizedText = textValue.trim();
+  const separator = getDelimiterText(delimiter);
+  const lower = (value: string) => value.toLowerCase();
+
+  if (!normalizedText) {
+    return input;
+  }
+
+  if (operation === "Add") {
+    if (position === "Prefix") {
+      return `${normalizedText}${separator}${input}`;
+    }
+    return `${input}${separator}${normalizedText}`;
+  }
+
+  if (operation === "Remove") {
+    if (position === "Prefix") {
+      const prefixCandidates = [
+        `${normalizedText}${separator}`,
+        normalizedText,
+        `${normalizedText}_`,
+        `${normalizedText}.`,
+      ];
+      for (const candidate of prefixCandidates) {
+        if (lower(input).startsWith(lower(candidate))) {
+          const stripped = input.slice(candidate.length);
+          return stripped.length > 0 ? stripped : input;
+        }
+      }
+      return input;
+    }
+
+    const suffixCandidates = [
+      `${separator}${normalizedText}`,
+      normalizedText,
+      `_${normalizedText}`,
+      `.${normalizedText}`,
+    ];
+    for (const candidate of suffixCandidates) {
+      if (lower(input).endsWith(lower(candidate))) {
+        const stripped = input.slice(0, -candidate.length);
+        return stripped.length > 0 ? stripped : input;
+      }
+    }
+    return input;
+  }
+
+  if (normalizedText.includes("*") || normalizedText.includes("?")) {
+    return replaceTextWithWildcardSupport(input, normalizedText, replaceWith.trim());
+  }
+
+  if (!separator) {
+    return replaceTextWithWildcardSupport(input, normalizedText, replaceWith.trim());
+  }
+
+  const pivotIndex = position === "Prefix" ? input.indexOf(separator) : input.lastIndexOf(separator);
+  if (pivotIndex < 0) {
+    return replaceTextWithWildcardSupport(input, normalizedText, replaceWith.trim());
+  }
+
+  if (position === "Prefix") {
+    const prefix = input.slice(0, pivotIndex);
+    const suffix = input.slice(pivotIndex);
+    return `${replaceTextWithWildcardSupport(prefix, normalizedText, replaceWith.trim())}${suffix}`;
+  }
+
+  const segmentStart = pivotIndex + separator.length;
+  const prefix = input.slice(0, segmentStart);
+  const suffix = input.slice(segmentStart);
+  return `${prefix}${replaceTextWithWildcardSupport(suffix, normalizedText, replaceWith.trim())}`;
+};
+
+const buildBulkTableName = (name: string, bulkState: BulkState): string => {
+  const renamed = applySingleBulkOperation(
+    name,
+    bulkState.operation,
+    bulkState.position,
+    bulkState.delimiter,
+    bulkState.textValue,
+    bulkState.replaceWith
+  );
+  const cased = applyBulkCase(renamed, bulkState.caseTransform).trim();
+  return cased || name;
+};
+
+const buildTableBulkPreview = (
+  rows: TableRecord[],
+  selectedIds: Set<string>,
+  bulkState: BulkState
+): TableBulkPreviewRow[] => {
+  const selectedRows = rows.filter((row) => selectedIds.has(row.id));
+  const usedBySheet = new Map<string, Set<string>>();
+
+  rows.forEach((row) => {
+    if (!usedBySheet.has(row.sheet)) {
+      usedBySheet.set(row.sheet, new Set());
+    }
+    usedBySheet.get(row.sheet)?.add(row.name.toLowerCase());
+  });
+
+  return selectedRows.map((row) => {
+    const used = usedBySheet.get(row.sheet) ?? new Set<string>();
+    used.delete(row.name.toLowerCase());
+
+    const transformed = buildBulkTableName(row.name, bulkState);
+    let candidate = transformed;
+    let index = 1;
+    while (used.has(candidate.toLowerCase())) {
+      candidate = `${transformed}_${index}`;
+      index += 1;
+    }
+
+    used.add(candidate.toLowerCase());
+    usedBySheet.set(row.sheet, used);
+
+    return {
+      row,
+      oldName: row.name,
+      newName: candidate,
+    };
+  });
+};
+
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const useStyles = makeStyles({
@@ -107,7 +298,16 @@ const useStyles = makeStyles({
     padding: "10px 8px",
     whiteSpace: "nowrap",
   },
+  headCellContent: { display: "grid", gap: "8px" },
   sortBtn: { border: "none", background: "transparent", fontWeight: 600, cursor: "pointer", padding: 0 },
+  columnFilterInput: {
+    width: "100%",
+    border: `1px solid ${MODERN_TOKENS.colorBorder}`,
+    borderRadius: "6px",
+    padding: "6px 8px",
+    fontSize: "12px",
+    backgroundColor: "#fff",
+  },
   row: {
     selectors: {
       "&:nth-child(even)": { backgroundColor: "#FCFCFD" },
@@ -156,6 +356,7 @@ const useStyles = makeStyles({
   full: { gridColumn: "1 / -1" },
   modalActions: { display: "flex", justifyContent: "flex-end", gap: "8px", flexWrap: "wrap", alignItems: "center" },
   modalDivider: { borderTop: `1px solid ${MODERN_TOKENS.colorBorder}`, marginTop: "4px" },
+  modalNote: { fontSize: "11px", color: MODERN_TOKENS.colorTextMuted },
 
   // ── Column picker table inside the modal ──
   colTable: {
@@ -237,6 +438,31 @@ const useStyles = makeStyles({
     fontSize: "11px",
     color: MODERN_TOKENS.colorTextMuted,
   },
+  previewBox: {
+    border: `1px solid ${MODERN_TOKENS.colorBorder}`,
+    borderRadius: "6px",
+    overflow: "auto",
+    maxHeight: "240px",
+    backgroundColor: "#fff",
+  },
+  previewTable: {
+    width: "100%",
+    borderCollapse: "collapse",
+    fontSize: "12px",
+  },
+  previewTh: {
+    position: "sticky",
+    top: 0,
+    backgroundColor: "#F3F4F6",
+    textAlign: "left",
+    padding: "8px",
+    borderBottom: `1px solid ${MODERN_TOKENS.colorBorder}`,
+  },
+  previewTd: {
+    padding: "8px",
+    borderBottom: `1px solid ${MODERN_TOKENS.colorBorder}`,
+    verticalAlign: "top",
+  },
 });
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -252,19 +478,14 @@ const TablesView: React.FC<TablesViewProps> = ({ onOpenLegacy }) => {
   const [loading, setLoading] = useState<boolean>(false);
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [search, setSearch] = useState<string>("");
+  const [columnFilters, setColumnFilters] = useState<Record<SortColumn, string>>(createEmptyTableFilters);
   const [sortColumn, setSortColumn] = useState<SortColumn>("name");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [inlineEdit, setInlineEdit] = useState<{ id: string; value: string } | null>(null);
 
   // Bulk rename modal
-  const [bulkState, setBulkState] = useState<BulkState>({
-    open: false,
-    mode: "Prefix",
-    value: "",
-    replaceWith: "",
-    caseTransform: "none",
-  });
+  const [bulkState, setBulkState] = useState<BulkState>(createDefaultBulkState);
 
   // Create Named Ranges modal
   const emptyRangesModal: RangesModalState = {
@@ -372,31 +593,33 @@ const TablesView: React.FC<TablesViewProps> = ({ onOpenLegacy }) => {
 
   // ── Computed values ────────────────────────────────────────────────────────
 
+  const hasActiveColumnFilters = TABLE_COLUMNS.some((column) => columnFilters[column].trim().length > 0);
+
   const visibleRows = useMemo(() => {
     const token = search.trim().toLowerCase();
     return rows
-      .filter((row) =>
-        token ? `${row.name} ${row.address} ${row.sheet} ${row.scope}`.toLowerCase().includes(token) : true
-      )
+      .filter((row) => {
+        const matchesSearch = token
+          ? `${row.name} ${row.address} ${row.sheet} ${row.scope}`.toLowerCase().includes(token)
+          : true;
+        const matchesColumnFilters = TABLE_COLUMNS.every((column) =>
+          row[column].toLowerCase().includes(columnFilters[column].trim().toLowerCase())
+        );
+        return matchesSearch && matchesColumnFilters;
+      })
       .sort((a, b) => {
         const compare = a[sortColumn].localeCompare(b[sortColumn], undefined, { sensitivity: "base" });
         return sortDirection === "asc" ? compare : -compare;
       });
-  }, [rows, search, sortColumn, sortDirection]);
+  }, [columnFilters, rows, search, sortColumn, sortDirection]);
 
   const allSelected = visibleRows.length > 0 && visibleRows.every((row) => selectedIds.has(row.id));
 
-  const bulkPreview = useMemo(() => {
-    const selected = rows.filter((row) => selectedIds.has(row.id));
-    return selected.map((row) => {
-      let nextName = row.name;
-      if (bulkState.mode === "Prefix") nextName = `${bulkState.value}${row.name}`;
-      if (bulkState.mode === "Suffix") nextName = `${row.name}${bulkState.value}`;
-      if (bulkState.mode === "Replace") nextName = row.name.replace(bulkState.value, bulkState.replaceWith);
-      nextName = applyBulkCase(nextName, bulkState.caseTransform);
-      return { row, oldName: row.name, newName: nextName };
-    });
-  }, [rows, selectedIds, bulkState]);
+  const bulkPreview = useMemo(
+    () => buildTableBulkPreview(rows, selectedIds, bulkState),
+    [bulkState, rows, selectedIds]
+  );
+  const bulkHasInput = bulkState.textValue.trim().length > 0;
 
   // ── Named Ranges modal — preview computation ───────────────────────────────
   //
@@ -543,6 +766,10 @@ const TablesView: React.FC<TablesViewProps> = ({ onOpenLegacy }) => {
 
   // ── Bulk rename ────────────────────────────────────────────────────────────
 
+  const resetBulkState = () => {
+    setBulkState(createDefaultBulkState());
+  };
+
   const applyBulk = async () => {
     if (bulkPreview.length === 0) return;
     setSubmitting(true);
@@ -551,7 +778,7 @@ const TablesView: React.FC<TablesViewProps> = ({ onOpenLegacy }) => {
         if (item.oldName === item.newName) continue;
         await updateTableName(item.row.sheet, item.oldName, item.newName);
       }
-      setBulkState((prev) => ({ ...prev, open: false }));
+      resetBulkState();
       setSelectedIds(new Set());
       await load();
       setStatusType("success");
@@ -582,10 +809,16 @@ const TablesView: React.FC<TablesViewProps> = ({ onOpenLegacy }) => {
           <Button onClick={() => void openCreateRangesModal()} disabled={selectedIds.size !== 1 || submitting}>
             Create Named Ranges from Table
           </Button>
-          <Button onClick={() => setBulkState((prev) => ({ ...prev, open: true }))} disabled={selectedIds.size === 0}>
+          <Button
+            onClick={() => setBulkState({ ...createDefaultBulkState(), open: true })}
+            disabled={selectedIds.size === 0}
+          >
             Bulk Edit ({selectedIds.size})
           </Button>
           <Button onClick={() => void load()} disabled={loading}>Refresh</Button>
+          <Button onClick={() => setColumnFilters(createEmptyTableFilters())} disabled={!hasActiveColumnFilters}>
+            Clear Filters
+          </Button>
           <Button onClick={onOpenLegacy}>Open Legacy View</Button>
           <div className={styles.spacer} />
           <Input placeholder="Search tables..." value={search} onChange={(_, data) => setSearch(data.value)} />
@@ -612,22 +845,36 @@ const TablesView: React.FC<TablesViewProps> = ({ onOpenLegacy }) => {
                 />
               </th>
               <th className={styles.headCell}>Actions</th>
-              {(["name", "address", "sheet", "scope"] as const).map((column) => (
+              {TABLE_COLUMNS.map((column) => (
                 <th key={column} className={styles.headCell}>
-                  <button
-                    type="button"
-                    className={styles.sortBtn}
-                    onClick={() => {
-                      if (sortColumn === column) setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
-                      else {
-                        setSortColumn(column);
-                        setSortDirection("asc");
+                  <div className={styles.headCellContent}>
+                    <button
+                      type="button"
+                      className={styles.sortBtn}
+                      onClick={() => {
+                        if (sortColumn === column) setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
+                        else {
+                          setSortColumn(column);
+                          setSortDirection("asc");
+                        }
+                      }}
+                    >
+                      {column[0].toUpperCase() + column.slice(1)}
+                      {sortColumn === column ? (sortDirection === "asc" ? " ▲" : " ▼") : ""}
+                    </button>
+                    <input
+                      type="text"
+                      className={styles.columnFilterInput}
+                      placeholder={`Filter ${column}...`}
+                      value={columnFilters[column]}
+                      onChange={(event) =>
+                        setColumnFilters((prev) => ({
+                          ...prev,
+                          [column]: event.target.value,
+                        }))
                       }
-                    }}
-                  >
-                    {column[0].toUpperCase() + column.slice(1)}
-                    {sortColumn === column ? (sortDirection === "asc" ? " ▲" : " ▼") : ""}
-                  </button>
+                    />
+                  </div>
                 </th>
               ))}
             </tr>
@@ -895,13 +1142,18 @@ const TablesView: React.FC<TablesViewProps> = ({ onOpenLegacy }) => {
             <Text className={shared.cardTitle}>Bulk Edit Tables</Text>
             <div className={styles.modalGrid}>
               <div>
-                <Text className={shared.mutedText}>Mode</Text>
+                <Text className={shared.mutedText}>Operation</Text>
                 <Select
-                  value={bulkState.mode}
-                  onChange={(_, data) => setBulkState((p) => ({ ...p, mode: data.value as BulkState["mode"] }))}
+                  value={bulkState.operation}
+                  onChange={(_, data) =>
+                    setBulkState((prev) => ({
+                      ...prev,
+                      operation: data.value as BulkOperation,
+                    }))
+                  }
                 >
-                  <option value="Prefix">Prefix</option>
-                  <option value="Suffix">Suffix</option>
+                  <option value="Add">Add</option>
+                  <option value="Remove">Remove</option>
                   <option value="Replace">Replace</option>
                 </Select>
               </div>
@@ -919,29 +1171,97 @@ const TablesView: React.FC<TablesViewProps> = ({ onOpenLegacy }) => {
                   <option value="SCREAMING_SNAKE_CASE">SCREAMING_SNAKE_CASE</option>
                 </Select>
               </div>
+              <div>
+                <Text className={shared.mutedText}>Position</Text>
+                <Select
+                  value={bulkState.position}
+                  onChange={(_, data) =>
+                    setBulkState((prev) => ({
+                      ...prev,
+                      position: data.value as BulkPosition,
+                    }))
+                  }
+                >
+                  <option value="Prefix">Prefix</option>
+                  <option value="Suffix">Suffix</option>
+                </Select>
+              </div>
+              <div>
+                <Text className={shared.mutedText}>Delimiter</Text>
+                <Select
+                  value={bulkState.delimiter}
+                  onChange={(_, data) =>
+                    setBulkState((prev) => ({
+                      ...prev,
+                      delimiter: data.value as BulkDelimiter,
+                    }))
+                  }
+                >
+                  <option value="none">None</option>
+                  <option value="underscore">Underscore (_)</option>
+                  <option value="dot">Dot (.)</option>
+                </Select>
+              </div>
               <div className={styles.full}>
-                <Text className={shared.mutedText}>{bulkState.mode === "Replace" ? "Find Text" : "Text"}</Text>
+                <Text className={shared.mutedText}>
+                  {bulkState.operation === "Replace" ? "Find Text" : "Text"}
+                </Text>
                 <Input
-                  value={bulkState.value}
-                  onChange={(_, data) => setBulkState((p) => ({ ...p, value: data.value }))}
+                  value={bulkState.textValue}
+                  onChange={(_, data) =>
+                    setBulkState((prev) => ({
+                      ...prev,
+                      textValue: data.value,
+                    }))
+                  }
                 />
               </div>
-              {bulkState.mode === "Replace" ? (
+              {bulkState.operation === "Replace" ? (
                 <div className={styles.full}>
                   <Text className={shared.mutedText}>Replace With</Text>
                   <Input
                     value={bulkState.replaceWith}
-                    onChange={(_, data) => setBulkState((p) => ({ ...p, replaceWith: data.value }))}
+                    onChange={(_, data) =>
+                      setBulkState((prev) => ({
+                        ...prev,
+                        replaceWith: data.value,
+                      }))
+                    }
                   />
                 </div>
               ) : null}
             </div>
-            <Text className={shared.mutedText}>{`Preview rows: ${bulkPreview.length}`}</Text>
+            <Text className={styles.modalNote}>
+              {bulkState.operation === "Replace"
+                ? "Wildcard support: use * for any text and ? for a single character. Example: _*"
+                : "Add and remove apply to the selected prefix or suffix, using the chosen delimiter when present."}
+            </Text>
+            <div>
+              <Text className={shared.mutedText}>{`Preview (${bulkPreview.length} selected)`}</Text>
+              <div className={styles.previewBox}>
+                <table className={styles.previewTable}>
+                  <thead>
+                    <tr>
+                      <th className={styles.previewTh}>Current Name</th>
+                      <th className={styles.previewTh}>New Name</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {bulkPreview.map((item) => (
+                      <tr key={item.row.id}>
+                        <td className={styles.previewTd}>{item.oldName}</td>
+                        <td className={styles.previewTd}>{item.newName}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
             <div className={styles.modalActions}>
-              <Button onClick={() => setBulkState((p) => ({ ...p, open: false }))}>Cancel</Button>
+              <Button onClick={resetBulkState}>Cancel</Button>
               <Button
                 appearance="primary"
-                disabled={submitting || bulkPreview.length === 0}
+                disabled={submitting || bulkPreview.length === 0 || !bulkHasInput}
                 onClick={() => void applyBulk()}
               >
                 Apply
