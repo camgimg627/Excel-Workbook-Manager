@@ -1034,7 +1034,7 @@ const NamesView: React.FC<NamesViewProps> = ({
               <button
                 type="button"
                 className={`${styles.typeFilterSummary} ${typeFilterOpen ? styles.typeFilterButtonOpen : ""}`}
-                aria-expanded={typeFilterOpen}
+                aria-expanded={typeFilterOpen ? "true" : "false"}
                 aria-controls="names-type-filter-menu"
                 onClick={() => setTypeFilterOpen((prev) => !prev)}
               >

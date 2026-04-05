@@ -427,6 +427,9 @@ const useStyles = makeStyles({
     color: MODERN_TOKENS.colorTextMuted,
     fontSize: "11px",
   },
+  colThNarrow: { width: "32px" },
+  colThWide: { width: "180px" },
+  colThOptionalSpan: { fontWeight: 400, marginLeft: "4px" },
   selectAllRow: {
     display: "flex",
     gap: "8px",
@@ -833,6 +836,7 @@ const TablesView: React.FC<TablesViewProps> = ({ onOpenLegacy }) => {
               <th className={styles.headCell}>
                 <input
                   type="checkbox"
+                  aria-label={allSelected ? "Deselect all tables" : "Select all tables"}
                   checked={allSelected}
                   onChange={() =>
                     setSelectedIds((prev) => {
@@ -885,6 +889,7 @@ const TablesView: React.FC<TablesViewProps> = ({ onOpenLegacy }) => {
                 <td className={styles.cell}>
                   <input
                     type="checkbox"
+                    aria-label={`Select table ${row.name}`}
                     checked={selectedIds.has(row.id)}
                     onChange={() =>
                       setSelectedIds((prev) => {
@@ -1033,12 +1038,12 @@ const TablesView: React.FC<TablesViewProps> = ({ onOpenLegacy }) => {
                 <table className={styles.colTable}>
                   <thead>
                     <tr className={styles.colTableHead}>
-                      <th className={styles.colTh} style={{ width: "32px" }}></th>
+                      <th className={`${styles.colTh} ${styles.colThNarrow}`}></th>
                       <th className={styles.colTh}>Column</th>
                       <th className={styles.colTh}>Address</th>
-                      <th className={styles.colTh} style={{ width: "180px" }}>
+                      <th className={`${styles.colTh} ${styles.colThWide}`}>
                         Custom Name Override
-                        <span style={{ fontWeight: 400, marginLeft: "4px" }}>(optional)</span>
+                        <span className={styles.colThOptionalSpan}>(optional)</span>
                       </th>
                       <th className={styles.colTh}>Preview</th>
                     </tr>
@@ -1066,6 +1071,7 @@ const TablesView: React.FC<TablesViewProps> = ({ onOpenLegacy }) => {
                           <td className={styles.colTd}>
                             <input
                               type="checkbox"
+                              aria-label={`Include column ${col.originalName}`}
                               checked={col.included}
                               onChange={() =>
                                 setRangesModal((prev) => ({
