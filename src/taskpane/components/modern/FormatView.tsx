@@ -2068,7 +2068,7 @@ const FormatView: React.FC<FormatViewProps> = ({
             className={s.sectionHeaderBtn}
             type="button"
             onClick={() => toggleLayoutSection("gridFreeze")}
-            aria-expanded={expandedSections.includes("gridFreeze")}
+            aria-expanded={expandedSections.includes("gridFreeze") ? "true" : "false"}
             aria-controls="format-grid-freeze-panel"
           >
             <span className={s.sectionHeaderMain}>
@@ -2102,7 +2102,7 @@ const FormatView: React.FC<FormatViewProps> = ({
             className={s.sectionHeaderBtn}
             type="button"
             onClick={() => toggleLayoutSection("sheetPresentation")}
-            aria-expanded={expandedSections.includes("sheetPresentation")}
+            aria-expanded={expandedSections.includes("sheetPresentation") ? "true" : "false"}
             aria-controls="format-sheet-presentation-panel"
           >
             <span className={s.sectionHeaderMain}>
@@ -3373,7 +3373,7 @@ const FormatView: React.FC<FormatViewProps> = ({
             className={s.sectionHeaderBtn}
             type="button"
             onClick={() => toggleLayoutSection("quickFormatting")}
-            aria-expanded={expandedSections.includes("quickFormatting")}
+            aria-expanded={expandedSections.includes("quickFormatting") ? "true" : "false"}
             aria-controls="format-quick-formatting-panel"
           >
             <span className={s.sectionHeaderMain}>
