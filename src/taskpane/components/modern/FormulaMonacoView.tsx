@@ -76,40 +76,57 @@ const configureMonacoLoader = () => {
 configureMonacoLoader();
 
 const FUNCTION_SUGGESTIONS = [
-  "ABS",
-  "AVERAGE",
-  "CHOOSE",
-  "COUNT",
-  "FILTER",
-  "IF",
-  "IFS",
-  "INDEX",
-  "INDIRECT",
-  "LAMBDA",
-  "LET",
-  "LOOKUP",
-  "MATCH",
-  "MAX",
-  "MIN",
-  "OFFSET",
-  "SEQUENCE",
-  "SORT",
-  "SORTBY",
-  "SUBTOTAL",
-  "SUM",
-  "SUMIF",
-  "SUMIFS",
-  "SUMPRODUCT",
-  "SWITCH",
-  "TEXT",
-  "TEXTAFTER",
-  "TEXTBEFORE",
-  "TEXTJOIN",
-  "TEXTSPLIT",
-  "UNIQUE",
-  "VLOOKUP",
-  "XLOOKUP",
-  "XMATCH",
+  "ABS","ACCRINT","ACCRINTM","ACOS","ACOSH","ACOT","ACOTH","ADDRESS","AGGREGATE","AMORDEGRC",
+  "AMORLINC","AND","ARABIC","AREAS","ASC","ASIN","ASINH","ATAN","ATAN2","ATANH","AVEDEV",
+  "AVERAGE","AVERAGEA","AVERAGEIF","AVERAGEIFS","BAHTTEXT","BASE","BESSELI","BESSELJ","BESSELK",
+  "BESSELY","BETA.DIST","BETA.INV","BETADIST","BETAINV","BIN2DEC","BIN2HEX","BIN2OCT",
+  "BINOM.DIST","BINOM.DIST.RANGE","BINOM.INV","BINOMDIST","BITAND","BITLSHIFT","BITOR",
+  "BITRSHIFT","BITXOR","CEILING","CEILING.MATH","CEILING.PRECISE","CELL","CHAR","CHISQ.DIST",
+  "CHISQ.DIST.RT","CHISQ.INV","CHISQ.INV.RT","CHISQ.TEST","CHISQDIST","CHISQINV","CHITEST",
+  "CHOOSE","CLEAN","CODE","COLUMN","COLUMNS","COMBIN","COMBINA","COMPLEX","CONCAT","CONCATENATE",
+  "CONFIDENCE","CONFIDENCE.NORM","CONFIDENCE.T","CONVERT","CORREL","COS","COSH","COT","COTH",
+  "COUNT","COUNTA","COUNTBLANK","COUNTIF","COUNTIFS","COUPDAYBS","COUPDAYS","COUPDAYSNC",
+  "COUPNCD","COUPNUM","COUPPCD","COVARIANCE.P","COVARIANCE.S","COVAR","CRITBINOM","CSC","CSCH",
+  "CUBEKPIMEMBER","CUBEMEMBER","CUBEMEMBERPROPERTY","CUBERANKEDMEMBER","CUBESET","CUBESETCOUNT",
+  "CUBEVALUE","CUMIPMT","CUMPRINC","DATE","DATEDIF","DATEVALUE","DAVERAGE","DAY","DAYS","DAYS360",
+  "DB","DCOUNT","DCOUNTA","DDB","DEC2BIN","DEC2HEX","DEC2OCT","DECIMAL","DEGREES","DELTA","DEVSQ",
+  "DGET","DISC","DMAX","DMIN","DOLLAR","DOLLARDE","DOLLARFR","DPRODUCT","DSTDEV","DSTDEVP","DSUM",
+  "DURATION","DVAR","DVARP","ECMA.CEILING","EDATE","EFFECT","EOMONTH","ERF","ERF.PRECISE","ERFC",
+  "ERFC.PRECISE","ERROR.TYPE","EUROCONVERT","EVEN","EXACT","EXP","EXPON.DIST","EXPONDIST","FACT",
+  "FACTDOUBLE","FALSE","FDIST","FILTER","FIND","FINDB","FISHER","FISHERINV","FIXED","FLOOR",
+  "FLOOR.MATH","FLOOR.PRECISE","FORECAST","FORECAST.ETS","FORECAST.ETS.CONFINT",
+  "FORECAST.ETS.SEASONALITY","FORECAST.ETS.STAT","FORECAST.LINEAR","FORMULATEXT","FREQUENCY",
+  "FTEST","FV","FVSCHEDULE","GAMMA","GAMMA.DIST","GAMMA.INV","GAMMADIST","GAMMAINV","GAMMALN",
+  "GAMMALN.PRECISE","GAUSS","GCD","GEOMEAN","GESTEP","GETPIVOTDATA","GROWTH","HARMEAN","HEX2BIN",
+  "HEX2DEC","HEX2OCT","HLOOKUP","HOUR","HYPERLINK","HYPGEOM.DIST","HYPGEOMDIST","IF","IFERROR",
+  "IFNA","IFS","IMABS","IMAGINARY","IMARGUMENT","IMCONJUGATE","IMCOS","IMCOSH","IMCOT","IMCSC",
+  "IMCSCH","IMDIV","IMEXP","IMLN","IMLOG10","IMLOG2","IMPOWER","IMPRODUCT","IMREAL","IMSEC",
+  "IMSECH","IMSIN","IMSINH","IMSQRT","IMSUB","IMSUM","INDEX","INDIRECT","INFO","INT","INTERCEPT",
+  "INTRATE","IPMT","IRR","ISBLANK","ISERR","ISERROR","ISEVEN","ISFORMULA","ISLOGICAL","ISNA",
+  "ISNONTEXT","ISNUMBER","ISODD","ISPMT","ISREF","ISTEXT","KURT","LARGE","LAMBDA","LCM","LEFT",
+  "LEFTB","LEN","LENB","LET","LINEST","LN","LOG","LOG10","LOGEST","LOGINV","LOGNORM.DIST",
+  "LOGNORM.INV","LOGNORMDIST","LOOKUP","LOWER","MATCH","MAX","MAXA","MAXIFS","MDETERM","MDURATION",
+  "MEDIAN","MID","MIDB","MIN","MINA","MINIFS","MINUTE","MINVERSE","MIRR","MMULT","MOD","MODE",
+  "MODE.MULT","MODE.SNGL","MONTH","MROUND","MULTINOMIAL","N","NA","NEGBINOM.DIST","NEGBINOMDIST",
+  "NETWORKDAYS","NETWORKDAYS.INTL","NOMINAL","NORM.DIST","NORM.INV","NORM.S.DIST","NORM.S.INV",
+  "NORMDIST","NORMINV","NORMSDIST","NORMSINV","NOT","NOW","NPER","NPV","NUMBERVALUE","OCT2BIN",
+  "OCT2DEC","OCT2HEX","ODD","ODDFPRICE","ODDFYIELD","ODDLPRICE","ODDLYIELD","OFFSET","OR",
+  "PDURATION","PEARSON","PERCENTILE","PERCENTILE.EXC","PERCENTILE.INC","PERCENTRANK",
+  "PERCENTRANK.EXC","PERCENTRANK.INC","PERMUT","PERMUTATIONA","PHI","PI","PMT","POISSON",
+  "POISSON.DIST","POWER","PPMT","PRICE","PRICEDISC","PRICEMAT","PROB","PRODUCT","PROPER","PV",
+  "QUARTILE","QUARTILE.EXC","QUARTILE.INC","QUOTIENT","RADIANS","RAND","RANDARRAY","RANDBETWEEN",
+  "RANK","RANK.AVG","RANK.EQ","RATE","RECEIVED","REDUCE","REPLACE","REPLACEB","REPT","RIGHT",
+  "RIGHTB","ROMAN","ROUND","ROUNDDOWN","ROUNDUP","ROW","ROWS","RRI","RSQ","RTD","SCAN","SEARCH",
+  "SEARCHB","SEC","SECH","SECOND","SEQUENCE","SERIESSUM","SHEET","SHEETS","SIGN","SIN","SINH",
+  "SKEW","SKEW.P","SLN","SLOPE","SMALL","SORT","SORTBY","SQRT","SQRTPI","STANDARDIZE","STDEV",
+  "STDEV.P","STDEV.S","STDEVA","STDEVP","STDEVPA","STEYX","SUBSTITUTE","SUBTOTAL","SUM","SUMIF",
+  "SUMIFS","SUMPRODUCT","SUMSQ","SUMX2MY2","SUMX2PY2","SUMXMY2","SWITCH","SYD","T","T.DIST",
+  "T.DIST.2T","T.DIST.RT","T.INV","T.INV.2T","T.TEST","TAN","TANH","TBILLEQ","TBILLPRICE",
+  "TBILLYIELD","TEXT","TEXTAFTER","TEXTBEFORE","TEXTJOIN","TEXTSPLIT","TIME","TIMEVALUE","TOCOL",
+  "TODAY","TOROW","TRANSPOSE","TREND","TRIM","TRIMMEAN","TRUE","TRUNC","TYPE","UNICHAR","UNICODE",
+  "UNIQUE","UPPER","VALUE","VAR","VAR.P","VAR.S","VARA","VARP","VARPA","VDB","VLOOKUP","WEBSERVICE",
+  "WEEKDAY","WEEKNUM","WEIBULL","WEIBULL.DIST","WORKDAY","WORKDAY.INTL","XIRR","XLOOKUP","XMATCH",
+  "XNPV","XOR","YEAR","YEARFRAC","YIELD","YIELDDISC","YIELDMAT","Z.TEST",
 ] as const;
 
 interface FormulaMonacoViewProps {
@@ -542,6 +559,7 @@ const useStyles = makeStyles({
     wordBreak: "break-word",
   },
   modalActions: { display: "flex", justifyContent: "flex-end", gap: "8px", flexWrap: "wrap" },
+  fullHeight: { height: "100%" },
 });
 
 const normalizeError = (error: unknown): string =>
@@ -675,6 +693,31 @@ const prettyFormatFormula = (input: string): string => {
   const trimmed = input.trim();
   if (!trimmed) return "";
   const formula = trimmed.startsWith("=") ? trimmed : `=${trimmed}`;
+
+  // Special case: LET formula — format as paired name, value lines
+  const letMatch = formula.match(/^=\s*LET\s*\(([\s\S]*)\)\s*$/i);
+  if (letMatch) {
+    const args = splitTopLevelComma(letMatch[1]);
+    if (args.length >= 3) {
+      const indent = "  ";
+      const lines: string[] = ["=LET("];
+      const calculationArg = args[args.length - 1];
+      const pairArgs = args.slice(0, -1);
+      for (let i = 0; i < pairArgs.length; i += 2) {
+        const nameArg = pairArgs[i] ?? "";
+        const valueArg = pairArgs[i + 1] ?? "";
+        if (valueArg) {
+          lines.push(`${indent}${nameArg}, ${valueArg},`);
+        } else if (nameArg) {
+          lines.push(`${indent}${nameArg},`);
+        }
+      }
+      lines.push(`${indent}${calculationArg}`);
+      lines.push(")");
+      return lines.join("\n");
+    }
+  }
+
   let depth = 0;
   let inString = false;
   let out = "";
@@ -707,6 +750,110 @@ const prettyFormatFormula = (input: string): string => {
   }
   return out;
 };
+
+// ── F4 reference-lock cycling ─────────────────────────────────────────────────
+
+type LockState = "none" | "abs" | "rowAbs" | "colAbs";
+
+const getLockState = (cellRef: string): LockState | null => {
+  const match = cellRef.match(/^(\$?)([A-Za-z]{1,3})(\$?)(\d+)$/);
+  if (!match) return null;
+  const hasColLock = match[1] === "$";
+  const hasRowLock = match[3] === "$";
+  if (hasColLock && hasRowLock) return "abs";
+  if (!hasColLock && hasRowLock) return "rowAbs";
+  if (hasColLock && !hasRowLock) return "colAbs";
+  return "none";
+};
+
+const applyLockState = (cellRef: string, state: LockState): string => {
+  const match = cellRef.match(/^(\$?)([A-Za-z]{1,3})(\$?)(\d+)$/);
+  if (!match) return cellRef;
+  const col = match[2];
+  const row = match[4];
+  if (state === "abs") return `$${col}$${row}`;
+  if (state === "rowAbs") return `${col}$${row}`;
+  if (state === "colAbs") return `$${col}${row}`;
+  return `${col}${row}`;
+};
+
+const nextLockState = (state: LockState): LockState => {
+  if (state === "none") return "abs";
+  if (state === "abs") return "rowAbs";
+  if (state === "rowAbs") return "colAbs";
+  return "none";
+};
+
+const cycleSingleCellLock = (cellRef: string): string => {
+  const state = getLockState(cellRef);
+  if (!state) return cellRef;
+  return applyLockState(cellRef, nextLockState(state));
+};
+
+const cycleRangeLock = (rangeRef: string): string => {
+  const rangeMatch = rangeRef.match(/^(\$?[A-Za-z]{1,3}\$?\d+)\s*:\s*(\$?[A-Za-z]{1,3}\$?\d+)$/);
+  if (!rangeMatch) return rangeRef;
+  const leftState = getLockState(rangeMatch[1]);
+  const rightState = getLockState(rangeMatch[2]);
+  const baseState = leftState ?? rightState;
+  if (!baseState) return rangeRef;
+  const nextState = nextLockState(baseState);
+  return `${applyLockState(rangeMatch[1], nextState)}:${applyLockState(rangeMatch[2], nextState)}`;
+};
+
+const cycleCellOrRangeLockAtCursor = (
+  text: string,
+  cursor: number,
+  selectionStart: number,
+  selectionEnd: number
+): { updated: string; nextStart: number; nextEnd: number } => {
+  if (selectionEnd > selectionStart) {
+    const selectedText = text.slice(selectionStart, selectionEnd);
+    const isCell = /^\$?[A-Za-z]{1,3}\$?\d+$/.test(selectedText);
+    const isRange = /^\$?[A-Za-z]{1,3}\$?\d+\s*:\s*\$?[A-Za-z]{1,3}\$?\d+$/.test(selectedText);
+    if (isCell || isRange) {
+      const replacement = isRange ? cycleRangeLock(selectedText) : cycleSingleCellLock(selectedText);
+      const updated = `${text.slice(0, selectionStart)}${replacement}${text.slice(selectionEnd)}`;
+      return { updated, nextStart: selectionStart, nextEnd: selectionStart + replacement.length };
+    }
+  }
+
+  const rangeRegex = /\$?[A-Za-z]{1,3}\$?\d+\s*:\s*\$?[A-Za-z]{1,3}\$?\d+/g;
+  let rangeMatch: RegExpExecArray | null;
+  while ((rangeMatch = rangeRegex.exec(text)) !== null) {
+    const start = rangeMatch.index;
+    const end = start + rangeMatch[0].length;
+    if (cursor >= start && cursor <= end) {
+      const replacement = cycleRangeLock(rangeMatch[0]);
+      const updated = `${text.slice(0, start)}${replacement}${text.slice(end)}`;
+      const nextPos = start + replacement.length;
+      return { updated, nextStart: nextPos, nextEnd: nextPos };
+    }
+  }
+
+  const cellRegex = /\$?[A-Za-z]{1,3}\$?\d+/g;
+  let chosen: { start: number; end: number; value: string } | null = null;
+  let cellMatch: RegExpExecArray | null;
+  while ((cellMatch = cellRegex.exec(text)) !== null) {
+    const start = cellMatch.index;
+    const end = start + cellMatch[0].length;
+    if (cursor >= start && cursor <= end) {
+      chosen = { start, end, value: cellMatch[0] };
+      break;
+    }
+    if (end < cursor) {
+      chosen = { start, end, value: cellMatch[0] };
+    }
+  }
+
+  if (!chosen) return { updated: text, nextStart: cursor, nextEnd: cursor };
+  const replacement = cycleSingleCellLock(chosen.value);
+  const updated = `${text.slice(0, chosen.start)}${replacement}${text.slice(chosen.end)}`;
+  const nextPos = chosen.start + replacement.length;
+  return { updated, nextStart: nextPos, nextEnd: nextPos };
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 const getTokenBeforeCursor = (text: string, cursorOffset: number): string => {
   const before = text.slice(0, cursorOffset);
@@ -853,6 +1000,7 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
     const [lastLambdaTestedAt, setLastLambdaTestedAt] = useState<string>("");
     const [lastTestInvocation, setLastTestInvocation] = useState<string>("");
     const [activeSubTab, setActiveSubTab] = useState<FormulaSubTab | null>("editor");
+    const [autoCaptureFormula, setAutoCaptureFormula] = useState<boolean>(false);
 
     const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
     const editorHostRef = useRef<HTMLDivElement | null>(null);
@@ -1075,6 +1223,33 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
     }, []);
 
     useEffect(() => {
+      if (!autoCaptureFormula) return undefined;
+      let disposed = false;
+      let busy = false;
+      const timerId = window.setInterval(() => {
+        if (disposed || busy) return;
+        busy = true;
+        void getActiveCellFormulaState()
+          .then((state) => {
+            if (disposed) return;
+            setActiveCell(state);
+            if (!state.hasFormula) return;
+            if (editorRef.current?.hasTextFocus()) return;
+            if (state.formula !== lastSyncedFormulaRef.current) {
+              setFormulaText(state.formula);
+              lastSyncedFormulaRef.current = state.formula;
+            }
+          })
+          .catch(() => { /* ignore transient Excel states */ })
+          .finally(() => { busy = false; });
+      }, 1100);
+      return () => {
+        disposed = true;
+        window.clearInterval(timerId);
+      };
+    }, [autoCaptureFormula]);
+
+    useEffect(() => {
       if (!activeSubTab) {
         return;
       }
@@ -1251,15 +1426,11 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
         return undefined;
       }
 
-      try {
-        const readyMessage: DialogReadyMessage = {
-          channel: DIALOG_RPC_CHANNEL,
-          type: "ready",
-        };
-        Office.context.ui?.messageParent(JSON.stringify(readyMessage));
-      } catch {
-        // ignore if bridge not ready yet
-      }
+      // Build readyMessage here — sent AFTER addHandlerAsync (see Bug 2 fix below).
+      const readyMessage: DialogReadyMessage = {
+        channel: DIALOG_RPC_CHANNEL,
+        type: "ready",
+      };
 
       const handler = (args: Office.DialogParentMessageReceivedEventArgs) => {
         let payload: unknown;
@@ -1363,7 +1534,20 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
         );
       };
 
-      Office.context.ui.addHandlerAsync(Office.EventType.DialogParentMessageReceived, handler);
+      // Bug 2 fix: send "ready" INSIDE the addHandlerAsync callback, not before it.
+      // Previously, messageParent("ready") fired before the handler was registered, so the
+      // host's immediate "open-formula" response arrived while we weren't listening — formula dropped.
+      Office.context.ui.addHandlerAsync(
+        Office.EventType.DialogParentMessageReceived,
+        handler,
+        () => {
+          try {
+            Office.context.ui?.messageParent(JSON.stringify(readyMessage));
+          } catch {
+            // ignore if bridge not ready
+          }
+        }
+      );
 
       return () => {
         pendingEvalRequestsRef.current.forEach((pending) => {
@@ -1743,9 +1927,45 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
       (editor) => {
         editorRef.current = editor;
         scheduleEditorLayout();
-        editor.onDidChangeModelContent(() => {
-          setFormulaText(editor.getValue());
-        });
+        // formulaText state is now synced via the <Editor onChange> prop below.
+        // Removed manual onDidChangeModelContent here to prevent double-firing.
+
+        // F4 — cycle cell/range reference lock ($A$1 → A$1 → $A1 → A1 → …)
+        const monaco = monacoRef.current;
+        if (monaco) {
+          editor.addCommand(monaco.KeyCode.F4, () => {
+            const model = editor.getModel();
+            if (!model) return;
+            const currentText = editor.getValue();
+            const position = editor.getPosition();
+            const cursorOffset = position ? model.getOffsetAt(position) : 0;
+            const sel = editor.getSelection();
+            const selStart = sel
+              ? model.getOffsetAt({ lineNumber: sel.startLineNumber, column: sel.startColumn })
+              : cursorOffset;
+            const selEnd = sel
+              ? model.getOffsetAt({ lineNumber: sel.endLineNumber, column: sel.endColumn })
+              : cursorOffset;
+            const { updated, nextStart, nextEnd } = cycleCellOrRangeLockAtCursor(
+              currentText,
+              cursorOffset,
+              selStart,
+              selEnd
+            );
+            if (updated === currentText) return;
+            editor.pushUndoStop();
+            editor.executeEdits("wbm-f4-lock", [{ range: model.getFullModelRange(), text: updated }]);
+            editor.pushUndoStop();
+            const nextPos = model.getPositionAt(nextStart);
+            const nextEndPos = model.getPositionAt(nextEnd);
+            editor.setSelection({
+              startLineNumber: nextPos.lineNumber,
+              startColumn: nextPos.column,
+              endLineNumber: nextEndPos.lineNumber,
+              endColumn: nextEndPos.column,
+            });
+          });
+        }
       },
       [scheduleEditorLayout]
     );
@@ -2144,7 +2364,11 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
               Active Cell: {activeCell ? `${activeCell.sheet}!${activeCell.address}` : "not linked"}
               {loadingMetadata ? " • loading suggestions..." : ""}
             </Text>
-            <Text className={shared.mutedText}>Manual sync only. Use Pull Active Formula when needed.</Text>
+            <Text className={shared.mutedText}>
+              {autoCaptureFormula
+                ? "Auto-capture active — formula updates when you select a cell with a formula."
+                : "Manual sync. Use Pull Active Formula or enable Auto-capture."}
+            </Text>
           </div>
 
           <div className={styles.modeRow}>
@@ -2308,6 +2532,12 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
                       >
                         Pull Active Formula
                       </Button>
+                      <Checkbox
+                        label="Auto-capture"
+                        title="Automatically pull the active cell formula whenever you select a cell that contains one"
+                        checked={autoCaptureFormula}
+                        onChange={(_, data) => setAutoCaptureFormula(Boolean(data.checked))}
+                      />
                       <Button
                         size="small"
                         onClick={() => void runAction("Beautify formula", beautify)}
@@ -2377,10 +2607,9 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
                       {editorLoadError ? (
                         <textarea
                           aria-label="Formula editor fallback"
-                          className={styles.fallbackEditor}
+                          className={`${styles.fallbackEditor} ${styles.fullHeight}`}
                           spellCheck={false}
                           rows={10}
-                          style={{ height: "100%" }}
                           value={formulaText}
                           onChange={(event) => setFormulaText(event.target.value)}
                         />
@@ -2389,6 +2618,7 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
                           height="100%"
                           language={MONACO_LANGUAGE_ID}
                           value={formulaText}
+                          onChange={(value) => setFormulaText(value ?? "")}
                           beforeMount={beforeMount}
                           onMount={onMount}
                           theme="vs"
@@ -2415,7 +2645,7 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
                           }}
                         />
                       ) : (
-                        <div className={styles.editorLoading} style={{ height: "100%" }}>
+                        <div className={`${styles.editorLoading} ${styles.fullHeight}`}>
                           <Text className={shared.mutedText}>Loading formula editor...</Text>
                         </div>
                       )}
