@@ -8,12 +8,14 @@ import {
   FormulaEvaluationResult,
   TableRecord,
   applyFormulaToActiveCell,
+  applyPythonFormulaToActiveCell,
   evaluateFormula,
   getActiveCellFormulaState,
   getCurrentSelectionAddress,
   getNamedRanges,
   getTables,
   openFormulaEditorPopout,
+  parsePyFormula,
   saveNamedFunction,
 } from "../../taskpane";
 import { MODERN_TOKENS, useModernSharedStyles } from "./designTokens";
@@ -156,6 +158,8 @@ type FormulaCreationMode = "Formula" | "Function";
 type FormulaAuthoringMode = "Editor" | "Wizard";
 type WizardTemplate = "LAMBDA" | "LET";
 type FormulaSubTab = "metadata" | "lambda-test" | "editor" | "wizard";
+type LanguageMode = "excel" | "python";
+type PyReturnType = "excel-value" | "python-object";
 
 interface WizardLetVariable {
   id: string;
@@ -560,6 +564,70 @@ const useStyles = makeStyles({
   },
   modalActions: { display: "flex", justifyContent: "flex-end", gap: "8px", flexWrap: "wrap" },
   fullHeight: { height: "100%" },
+
+  // ── Python mode ──────────────────────────────────────────────────────────
+  langToggleRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+  },
+  pyToolbar: {
+    borderRadius: "8px",
+    border: `1px solid ${MODERN_TOKENS.colorBorder}`,
+    backgroundColor: "#F8FAFC",
+    padding: "8px",
+    display: "grid",
+    gap: "8px",
+  },
+  pyToolbarButtons: {
+    display: "flex",
+    gap: "8px",
+    flexWrap: "wrap",
+    alignItems: "center",
+  },
+  xlPickerPanel: {
+    borderRadius: "6px",
+    border: `1px solid ${MODERN_TOKENS.colorBorder}`,
+    backgroundColor: "#FFFFFF",
+    padding: "6px",
+    display: "grid",
+    gap: "2px",
+    maxHeight: "160px",
+    overflow: "auto",
+  },
+  xlPickerItem: {
+    borderRadius: "4px",
+    border: "none",
+    backgroundColor: "transparent",
+    color: MODERN_TOKENS.colorText,
+    fontSize: "12px",
+    padding: "5px 8px",
+    cursor: "pointer",
+    textAlign: "left",
+    ":hover": {
+      backgroundColor: "#E8F4EA",
+      color: MODERN_TOKENS.colorBrandStrong,
+    },
+  },
+  xlPickerEmpty: {
+    fontSize: "12px",
+    color: MODERN_TOKENS.colorTextMuted,
+    padding: "6px 8px",
+  },
+  pyStatusPanel: {
+    borderRadius: "8px",
+    border: `1px solid ${MODERN_TOKENS.colorBorder}`,
+    backgroundColor: "#F8FAFC",
+    padding: "10px 12px",
+    display: "grid",
+    gap: "6px",
+  },
+  pyApplyRow: {
+    display: "flex",
+    gap: "8px",
+    alignItems: "center",
+    flexWrap: "wrap",
+  },
 });
 
 const normalizeError = (error: unknown): string =>
@@ -1002,8 +1070,19 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
     const [activeSubTab, setActiveSubTab] = useState<FormulaSubTab | null>("editor");
     const [autoCaptureFormula, setAutoCaptureFormula] = useState<boolean>(false);
 
+    // ── Python mode state ──────────────────────────────────────────────────
+    const [languageMode, setLanguageMode] = useState<LanguageMode>("excel");
+    const [pythonText, setPythonText] = useState<string>("");
+    const [pyReturnType, setPyReturnType] = useState<PyReturnType>("excel-value");
+    const [pyStatus, setPyStatus] = useState<string>("");
+    const [pyStatusType, setPyStatusType] = useState<"idle" | "success" | "error">("idle");
+    const [pyApplying, setPyApplying] = useState<boolean>(false);
+    const [showXlPicker, setShowXlPicker] = useState<boolean>(false);
+
     const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
     const editorHostRef = useRef<HTMLDivElement | null>(null);
+    const pyEditorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
+    const pyEditorHostRef = useRef<HTMLDivElement | null>(null);
     const monacoRef = useRef<typeof Monaco | null>(null);
     const providerRef = useRef<Monaco.IDisposable | null>(null);
     const layoutFrameRef = useRef<number | null>(null);
@@ -1977,6 +2056,12 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
       };
     }, [registerCompletionProvider]);
 
+    const onPythonMount: OnMount = useCallback((editor) => {
+      pyEditorRef.current = editor;
+      // Trigger an immediate layout in case the host already has dimensions.
+      window.requestAnimationFrame(() => editor.layout());
+    }, []);
+
     useEffect(() => {
       if (typeof window === "undefined") {
         return undefined;
@@ -2211,6 +2296,106 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
       }
     };
 
+    // ── Python mode effects ────────────────────────────────────────────────
+
+    // Re-layout Python editor when switching into Python mode (container was hidden)
+    useEffect(() => {
+      if (languageMode !== "python") return undefined;
+      const frameId = window.requestAnimationFrame(() => {
+        pyEditorRef.current?.layout();
+      });
+      return () => window.cancelAnimationFrame(frameId);
+    }, [languageMode]);
+
+    // Keep Python Monaco value in sync with pythonText state
+    useEffect(() => {
+      if (!pyEditorRef.current) return;
+      if (pyEditorRef.current.getValue() !== pythonText) {
+        pyEditorRef.current.setValue(pythonText);
+      }
+    }, [pythonText]);
+
+    // Resize observer for Python editor host
+    useEffect(() => {
+      if (typeof window === "undefined") return undefined;
+      const host = pyEditorHostRef.current;
+      const onResize = () => { pyEditorRef.current?.layout(); };
+      window.addEventListener("resize", onResize);
+      let observer: ResizeObserver | null = null;
+      if (host && typeof ResizeObserver !== "undefined") {
+        observer = new ResizeObserver(onResize);
+        observer.observe(host);
+      }
+      return () => {
+        observer?.disconnect();
+        window.removeEventListener("resize", onResize);
+      };
+    }, []);
+
+    // ── Python mode handlers ───────────────────────────────────────────────
+
+    const formatPythonCode = useCallback(() => {
+      setPythonText((prev) =>
+        prev
+          .split("\n")
+          .map((line) => line.replace(/^\t+/, (tabs) => "    ".repeat(tabs.length)).trimEnd())
+          .join("\n")
+          .trimEnd()
+      );
+    }, []);
+
+    const insertXlReference = useCallback((tableName: string) => {
+      const snippet = `xl("${tableName}[#All]", headers=True)`;
+      if (pyEditorRef.current) {
+        const sel = pyEditorRef.current.getSelection();
+        if (sel) {
+          pyEditorRef.current.executeEdits("wbm-insert-xl", [
+            { range: sel, text: snippet, forceMoveMarkers: true },
+          ]);
+          setPythonText(pyEditorRef.current.getValue());
+        }
+      } else {
+        setPythonText((prev) => (prev ? `${prev}${snippet}` : snippet));
+      }
+      setShowXlPicker(false);
+    }, []);
+
+    const handlePythonApply = useCallback(async () => {
+      const code = (pyEditorRef.current?.getValue() ?? pythonText).trim();
+      if (!code) {
+        setPyStatus("Python editor is empty.");
+        setPyStatusType("error");
+        return;
+      }
+      setPyApplying(true);
+      setPyStatus("");
+      try {
+        await applyPythonFormulaToActiveCell(code, pyReturnType);
+        const now = new Date().toLocaleTimeString();
+        setPyStatus(`Applied to active cell at ${now}.`);
+        setPyStatusType("success");
+      } catch (error) {
+        setPyStatus(`Apply failed: ${normalizeError(error)}`);
+        setPyStatusType("error");
+      } finally {
+        setPyApplying(false);
+      }
+    }, [pythonText, pyReturnType]);
+
+    // When switching to Python mode, try to parse an existing =PY() formula
+    // from the active cell so the editor is pre-populated.
+    const switchToPythonMode = useCallback(async () => {
+      setLanguageMode("python");
+      setShowXlPicker(false);
+      if (activeCell?.hasFormula && activeCell.formula) {
+        const parsed = parsePyFormula(activeCell.formula);
+        if (parsed && !pythonText) {
+          setPythonText(parsed.code);
+          setPyReturnType(parsed.returnType);
+        }
+      }
+    }, [activeCell, pythonText]);
+
     React.useImperativeHandle(ref, () => ({
       openOnly: async () => {
         await runAction("Load active cell state", async () => {
@@ -2371,50 +2556,76 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
             </Text>
           </div>
 
-          <div className={styles.modeRow}>
-            <Text className={shared.mutedText}>Create:</Text>
+          {/* ── Language mode toggle ─────────────────────────────────────────── */}
+          <div className={styles.langToggleRow}>
+            <Text className={shared.mutedText}>Mode:</Text>
             <div className={styles.slicer}>
-              {(["Formula", "Function"] as FormulaCreationMode[]).map((mode) => (
+              {(["excel", "python"] as LanguageMode[]).map((mode) => (
                 <button
                   key={mode}
                   type="button"
-                  className={`${styles.slicerBtn} ${creationMode === mode ? styles.slicerBtnActive : ""}`}
-                  onClick={() => setCreationMode(mode)}
+                  className={`${styles.slicerBtn} ${languageMode === mode ? styles.slicerBtnActive : ""}`}
+                  onClick={() => {
+                    if (mode === "python") {
+                      void switchToPythonMode();
+                    } else {
+                      setLanguageMode("excel");
+                      setShowXlPicker(false);
+                    }
+                  }}
                 >
-                  {mode === "Function" ? "Function (LAMBDA)" : "Formula"}
-                </button>
-              ))}
-            </div>
-            <Text className={shared.mutedText}>Authoring:</Text>
-            <div className={styles.slicer}>
-              {(["Editor", "Wizard"] as FormulaAuthoringMode[]).map((mode) => (
-                <button
-                  key={mode}
-                  type="button"
-                  className={`${styles.slicerBtn} ${authoringMode === mode ? styles.slicerBtnActive : ""}`}
-                  onClick={() => setAuthoringMode(mode)}
-                >
-                  {mode}
+                  {mode === "excel" ? "Excel Formula" : "Python"}
                 </button>
               ))}
             </div>
           </div>
 
-          <div className={styles.subTabBar}>
-            {availableSubTabs.map((tab) => (
-              <button
-                key={tab.key}
-                type="button"
-                className={`${styles.subTabBtn} ${activeSubTab === tab.key ? styles.subTabBtnActive : ""}`}
-                onClick={() => setActiveSubTab((prev) => (prev === tab.key ? null : tab.key))}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
+          {/* ── Excel formula section — hidden (not unmounted) in Python mode ── */}
+          <div style={{ display: languageMode === "excel" ? undefined : "none" }}>
+            <div className={styles.modeRow}>
+              <Text className={shared.mutedText}>Create:</Text>
+              <div className={styles.slicer}>
+                {(["Formula", "Function"] as FormulaCreationMode[]).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    className={`${styles.slicerBtn} ${creationMode === mode ? styles.slicerBtnActive : ""}`}
+                    onClick={() => setCreationMode(mode)}
+                  >
+                    {mode === "Function" ? "Function (LAMBDA)" : "Formula"}
+                  </button>
+                ))}
+              </div>
+              <Text className={shared.mutedText}>Authoring:</Text>
+              <div className={styles.slicer}>
+                {(["Editor", "Wizard"] as FormulaAuthoringMode[]).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    className={`${styles.slicerBtn} ${authoringMode === mode ? styles.slicerBtnActive : ""}`}
+                    onClick={() => setAuthoringMode(mode)}
+                  >
+                    {mode}
+                  </button>
+                ))}
+              </div>
+            </div>
 
-          {activeSubTab ? (
-            <div className={styles.subTabPanel}>
+            <div className={styles.subTabBar}>
+              {availableSubTabs.map((tab) => (
+                <button
+                  key={tab.key}
+                  type="button"
+                  className={`${styles.subTabBtn} ${activeSubTab === tab.key ? styles.subTabBtnActive : ""}`}
+                  onClick={() => setActiveSubTab((prev) => (prev === tab.key ? null : tab.key))}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            {activeSubTab ? (
+              <div className={styles.subTabPanel}>
               {activeSubTab === "metadata" && creationMode === "Function" ? (
                 <div className={styles.functionMetaGrid}>
                   <div>
@@ -2851,6 +3062,118 @@ const FormulaMonacoView = React.forwardRef<FormulaViewHandle, FormulaMonacoViewP
           ) : null}
 
           {status ? <Text className={statusClass}>{status}</Text> : null}
+          </div>{/* end Excel formula section */}
+
+          {/* ── Python editor panel — always in DOM, CSS-hidden in Excel mode ── */}
+          <div style={{ display: languageMode === "python" ? undefined : "none" }}>
+
+            {/* Python toolbar */}
+            <div className={styles.pyToolbar}>
+              <div className={styles.pyToolbarButtons}>
+                <Button
+                  size="small"
+                  onClick={() => setShowXlPicker((prev) => !prev)}
+                >
+                  Insert xl() reference
+                </Button>
+                <Button size="small" onClick={formatPythonCode}>
+                  Format code
+                </Button>
+                <Select
+                  className={styles.modeSelect}
+                  value={pyReturnType}
+                  onChange={(_, data) => setPyReturnType(data.value as PyReturnType)}
+                >
+                  <option value="excel-value">Excel Value (spills to grid)</option>
+                  <option value="python-object">Python Object (embedded)</option>
+                </Select>
+              </div>
+
+              {showXlPicker ? (
+                <div className={styles.xlPickerPanel}>
+                  {tablesRef.current.length === 0 ? (
+                    <span className={styles.xlPickerEmpty}>No tables in this workbook.</span>
+                  ) : (
+                    tablesRef.current.map((name) => (
+                      <button
+                        key={name}
+                        type="button"
+                        className={styles.xlPickerItem}
+                        onClick={() => insertXlReference(name)}
+                      >
+                        {name}
+                      </button>
+                    ))
+                  )}
+                </div>
+              ) : null}
+            </div>
+
+            {/* Python Monaco editor */}
+            <div className={styles.editorStage}>
+              <div
+                ref={pyEditorHostRef}
+                className={`${styles.editorWrap} ${styles.editorWrapResizable} ${
+                  isPopout ? styles.editorWrapResizablePopout : ""
+                }`}
+              >
+                {editorReady ? (
+                  <Editor
+                    height="100%"
+                    language="python"
+                    value={pythonText}
+                    onChange={(value) => setPythonText(value ?? "")}
+                    onMount={onPythonMount}
+                    theme="vs"
+                    options={{
+                      minimap: { enabled: false },
+                      scrollBeyondLastLine: false,
+                      fontSize: 14,
+                      lineHeight: 22,
+                      lineNumbers: "on",
+                      wordWrap: "on",
+                      tabSize: 4,
+                      insertSpaces: true,
+                      padding: { top: 12, bottom: 12 },
+                    }}
+                  />
+                ) : (
+                  <div className={`${styles.editorLoading} ${styles.fullHeight}`}>
+                    <Text className={shared.mutedText}>Loading Python editor...</Text>
+                  </div>
+                )}
+              </div>
+
+              {/* Python status panel (replaces Calculate Output panel) */}
+              <div className={styles.pyStatusPanel}>
+                {pyStatusType === "idle" ? (
+                  <Text className={shared.mutedText}>
+                    Apply formula to active cell to run this code.
+                  </Text>
+                ) : pyStatusType === "success" ? (
+                  <Text className={shared.successText}>{pyStatus}</Text>
+                ) : (
+                  <Text className={shared.errorText}>{pyStatus}</Text>
+                )}
+              </div>
+            </div>
+
+            {/* Apply row */}
+            <div className={styles.pyApplyRow}>
+              <Button
+                appearance="primary"
+                size="small"
+                disabled={pyApplying}
+                onClick={() => void handlePythonApply()}
+              >
+                {pyApplying ? "Applying…" : "Apply to Active Cell"}
+              </Button>
+              <Text className={shared.mutedText}>
+                Wraps code in{" "}
+                <code>=PY(&quot;...&quot;)</code> and writes to the active cell.
+              </Text>
+            </div>
+          </div>{/* end Python panel */}
         </div>
 
         {showSaveFunctionModal ? (

@@ -4670,3 +4670,66 @@ export async function openFormulaEditorPopout(initialState?: {
     );
   });
 }
+
+// ─── Python-in-Excel helpers ────────────────────────────────────────────────
+// These helpers support the Python editor panel in FormulaMonacoView.
+
+/** Double all double-quotes so a Python code string is safe inside =PY("..."). */
+function escapePyCode(code: string): string {
+  return code.replace(/"/g, '""');
+}
+
+/**
+ * Build an Excel =PY() formula from raw Python code.
+ * returnType "excel-value"  → returnType arg 1 (spills to grid)
+ * returnType "python-object" → returnType arg 0 (embedded Python object)
+ */
+export function buildPyFormula(
+  code: string,
+  returnType: "excel-value" | "python-object"
+): string {
+  const escaped = escapePyCode(code);
+  const rtArg = returnType === "python-object" ? ", 0" : ", 1";
+  return `=PY("${escaped}"${rtArg})`;
+}
+
+/**
+ * Parse an existing =PY("...", n) formula back into its code and returnType.
+ * Returns null if the formula is not a valid =PY() call.
+ */
+export function parsePyFormula(
+  formula: string
+): { code: string; returnType: "excel-value" | "python-object" } | null {
+  const match = /^=PY\("([\s\S]*)"\s*(?:,\s*(\d))?\s*\)$/i.exec(formula.trim());
+  if (!match) return null;
+  const code = match[1].replace(/""/g, '"');
+  const returnType = match[2] === "0" ? "python-object" : "excel-value";
+  return { code, returnType };
+}
+
+/** Wrap Python code in =PY() and write it to the active cell. */
+export async function applyPythonFormulaToActiveCell(
+  code: string,
+  returnType: "excel-value" | "python-object"
+): Promise<void> {
+  const formula = buildPyFormula(code, returnType);
+  await Excel.run(async (context) => {
+    const cell = context.workbook.getActiveCell();
+    cell.formulas = [[formula]];
+    await context.sync();
+  });
+}
+
+/**
+ * Return the column names for a workbook-level table lookup (used by xl() picker).
+ * NOTE: distinct from the existing getTableColumns(sheetName, tableName) which
+ * returns full TableColumnRecord[]; this returns plain string[] by table name only.
+ */
+export async function getTableColumnNames(tableName: string): Promise<string[]> {
+  return Excel.run(async (context) => {
+    const table = context.workbook.tables.getItem(tableName);
+    const columns = table.columns.load("items/name");
+    await context.sync();
+    return columns.items.map((col) => col.name);
+  });
+}
